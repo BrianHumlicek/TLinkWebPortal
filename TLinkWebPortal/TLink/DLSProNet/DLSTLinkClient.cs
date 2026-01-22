@@ -35,7 +35,7 @@ namespace DSC.TLink.DLSProNet
 			encryptionActive = true;
 		}
 		public void DeactivateEncryption() => encryptionActive = false;
-		protected override async Task sendPacket(byte[] packet, CancellationToken cancellationToken)
+		protected override async Task sendPacketAsync(byte[] packet, CancellationToken cancellationToken)
 		{
 			if (encryptionActive)
 			{
@@ -47,7 +47,7 @@ namespace DSC.TLink.DLSProNet
 
 			packet = lengthBytes.Concat(packet).ToArray();
 
-			await base.sendPacket(packet, cancellationToken);
+			await base.sendPacketAsync(packet, cancellationToken);
 		}
 		protected override (byte[] header, byte[] payload) parseTLinkFrame(ReadOnlySequence<byte> packetSequence)
 		{
@@ -61,7 +61,7 @@ namespace DSC.TLink.DLSProNet
 			return base.parseTLinkFrame(packetSequence);
 		}
 		//DLS packets are wrapped in a length encoded array
-		protected override bool tryGetPacketSlice(ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> packetSlice)
+		protected override bool tryGetFullPacketSlice(ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> packetSlice)
 		{
 			SequenceReader<byte> sequenceReader = new SequenceReader<byte>(buffer);
 			short encodedLength;    //This is probably technically a ushort, but there isnt a bcl extension that uses that type so unless I make one...
@@ -73,7 +73,7 @@ namespace DSC.TLink.DLSProNet
 
 			packetSlice = sequenceReader.Sequence.Slice(2, encodedLength);
 
-			return base.tryGetPacketSlice(packetSlice, out packetSlice);
+			return base.tryGetFullPacketSlice(packetSlice, out packetSlice);
 		}
 		public void Dispose()
 		{

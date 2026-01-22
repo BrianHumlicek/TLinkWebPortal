@@ -14,26 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using DSC.TLink.Messages;
+using MemoryPack;
 using DSC.TLink.ITv2.Enumerations;
-using DSC.TLink.Messages.Extensions;
 
 namespace DSC.TLink.ITv2.Messages
 {
-	internal record CommandResponse : ITv2MessageData
+	[MemoryPackable]
+	[ITv2Command(ITv2Command.Command_Response)]
+	internal partial record CommandResponse : IMessageData
 	{
-		public CommandResponseCode ResponseCode { get; set; }
-
-		protected override List<byte> buildByteList()
-		{
-			return [ (byte)ResponseCode ];
-		}
-
-		protected override ReadOnlySpan<byte> initialize(ReadOnlySpan<byte> bytes)
-		{
-			bytes.PopAndSetValue((byte value) => ResponseCode = (CommandResponseCode)value);
-			return bytes;
-		}
-		public override ITv2Command Command => ITv2Command.Command_Response;
+		public CommandResponseCode ResponseCode { get; init; }
 	}
 }

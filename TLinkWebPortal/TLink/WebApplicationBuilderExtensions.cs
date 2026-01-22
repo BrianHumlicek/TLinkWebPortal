@@ -34,6 +34,7 @@ namespace DSC.TLink
 					listenOptions.UseConnectionHandler<ITv2ConnectionHandler>();
 				});
 			});
+            builder.Services.AddTransient<TLinkClient>();
 			builder.Services.AddTransient<ITv2Session>();
 			builder.Services.AddMediatR((configuration) =>
 			{

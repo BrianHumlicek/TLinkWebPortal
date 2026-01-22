@@ -32,7 +32,7 @@ namespace DSC.TLink.Extensions
 				log.LogDebug(message, sequence.ToArray());
 			}
 		}
-		public static void LogDebug(this ILogger log, string message, IEnumerable<byte> bytes)
+        public static void LogDebug(this ILogger log, string message, IEnumerable<byte> bytes)
 		{
 			if (log.IsEnabled(LogLevel.Debug))
 			{

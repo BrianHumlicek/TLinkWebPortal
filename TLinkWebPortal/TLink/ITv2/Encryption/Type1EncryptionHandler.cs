@@ -22,14 +22,14 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace DSC.TLink.ITv2
+namespace DSC.TLink.ITv2.Encryption
 {
-	internal class ITv2EncryptionType1 : ITv2Encryption
+	internal class Type1EncryptionHandler : EncryptionHandler
 	{
 		readonly byte[] integrationAccessCode;
 		readonly byte[] integrationIdentificationNumber;
 
-		public ITv2EncryptionType1(IConfiguration configuration) : this(configuration[ConfigurationSettings.IntegrationAccessCodeType1], configuration[ConfigurationSettings.IntegrationIdentificationNumber])
+		public Type1EncryptionHandler(IConfiguration configuration) : this(configuration[ConfigurationSettings.IntegrationAccessCodeType1], configuration[ConfigurationSettings.IntegrationIdentificationNumber])
 		{
 
 		}
@@ -38,7 +38,7 @@ namespace DSC.TLink.ITv2
 		/// </summary>
 		/// <param name="integrationAccessCode">Type 1 Integration Access Code [851][423,450,477,504]</param>
 		/// <param name="integrationIdentificationNumber">Integration Identification Number [851][422]</param>
-		public ITv2EncryptionType1(string integrationAccessCode, string integrationIdentificationNumber)
+		public Type1EncryptionHandler(string integrationAccessCode, string integrationIdentificationNumber)
 		{
 			if (integrationAccessCode == null) throw new ArgumentNullException(nameof(integrationAccessCode));
 			if (integrationIdentificationNumber == null) throw new ArgumentNullException(nameof(integrationIdentificationNumber));

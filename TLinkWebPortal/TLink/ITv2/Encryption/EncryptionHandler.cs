@@ -16,23 +16,23 @@
 
 using System.Security.Cryptography;
 
-namespace DSC.TLink.ITv2
+namespace DSC.TLink.ITv2.Encryption
 {
-	internal abstract class ITv2Encryption : IDisposable
+	internal abstract class EncryptionHandler : IDisposable
 	{
-		readonly Aes inboundAES = Aes.Create();
-		readonly Aes outboundAES = Aes.Create();
-		bool inboundActive;
-		bool outboundActive;
+        Aes? inboundAES;
+        Aes? outboundAES;
 		protected void activateInbound(byte[] key)
 		{
-			inboundAES.Key = key;
-			inboundActive = true;
+            if (inboundAES != null) throw new InvalidOperationException("Inbound encryption is already active.");
+            inboundAES = Aes.Create();
+            inboundAES.Key = key;
 		}
 		protected void activateOutbound(byte[] key)
 		{
-			outboundAES.Key = key;
-			outboundActive = true;
+            if (outboundAES != null) throw new InvalidOperationException("Outbound encryption is already active.");
+            outboundAES = Aes.Create();
+            outboundAES.Key = key;
 		}
 		protected byte[] encryptKeyData(byte[] key, byte[] plainText)
 		{
@@ -50,14 +50,14 @@ namespace DSC.TLink.ITv2
 				return aes.DecryptEcb(cipherText, PaddingMode.Zeros);
 			}
 		}
-		public abstract byte[] ConfigureInboundEncryption();
-		public abstract void ConfigureOutboundEncryption(byte[] remoteInitializer);
-		public byte[] HandleInboundData(byte[] inboundData) => inboundActive ? inboundAES.DecryptEcb(inboundData, PaddingMode.Zeros) : inboundData;
-		public byte[] HandleOutboundData(byte[] outboundData) => outboundActive ? outboundAES.EncryptEcb(outboundData, PaddingMode.Zeros) : outboundData;
+        public abstract byte[] ConfigureInboundEncryption();// => throw new NotImplementedException();
+        public abstract void ConfigureOutboundEncryption(byte[] remoteInitializer);// => throw new NotImplementedException();
+		public byte[] HandleInboundData(byte[] inboundData) => inboundAES?.DecryptEcb(inboundData, PaddingMode.Zeros) ?? inboundData;
+		public byte[] HandleOutboundData(byte[] outboundData) => outboundAES?.EncryptEcb(outboundData, PaddingMode.Zeros) ?? outboundData;
 		public void Dispose()
 		{
-			inboundAES.Dispose();
-			outboundAES.Dispose();
+			inboundAES?.Dispose();
+			outboundAES?.Dispose();
 		}
 	}
 }

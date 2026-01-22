@@ -17,12 +17,12 @@
 using Microsoft.Extensions.Configuration;
 using System.Security.Cryptography;
 
-namespace DSC.TLink.ITv2
+namespace DSC.TLink.ITv2.Encryption
 {
-	internal class ITv2EncryptionType2 : ITv2Encryption
+	internal class Type2EncryptionHandler : EncryptionHandler
 	{
 		readonly byte[] integrationAccessCode;
-		public ITv2EncryptionType2(IConfiguration configuration) : this(configuration[ConfigurationSettings.IntegrationAccessCodeType2])
+		public Type2EncryptionHandler(IConfiguration configuration) : this(configuration[ConfigurationSettings.IntegrationAccessCodeType2])
 		{
 
 		}
@@ -31,13 +31,13 @@ namespace DSC.TLink.ITv2
 		/// ID's [851][700,701,702,703] for panel integration session 1-4
 		/// </summary>
 		/// <param name="integrationAccessCode">Type 2 Integration Access Code [851][700,701,702,703]</param>
-		public ITv2EncryptionType2(string integrationAccessCode)
+		public Type2EncryptionHandler(string integrationAccessCode)
 		{
 			if (integrationAccessCode == null) throw new ArgumentNullException(nameof(integrationAccessCode));
 			if (integrationAccessCode.Length != 32) throw new ArgumentException(nameof(integrationAccessCode));
 			this.integrationAccessCode = Convert.FromHexString(integrationAccessCode);
 		}
-		public override void ConfigureOutboundEncryption(byte[] remoteInitializer)
+		public override void ConfigureOutboundEncryption(byte[] remoteInitializer)  //Notes in the code indicate this might be the MAC address of the remote device.  If so, wow...
 		{
 			if (remoteInitializer.Length != 16) throw new ArgumentException(nameof(remoteInitializer));
 			byte[] outboundKey = encryptKeyData(integrationAccessCode, remoteInitializer);

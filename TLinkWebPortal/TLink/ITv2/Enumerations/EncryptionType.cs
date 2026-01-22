@@ -16,7 +16,7 @@
 
 namespace DSC.TLink.ITv2.Enumerations
 {
-	internal enum EncryptionType : byte
+	public enum EncryptionType : byte
 	{
 		Unknown,
 		Type1 = 1,

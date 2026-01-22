@@ -14,11 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace DSC.TLink.Messages
+namespace DSC.TLink.ITv2.Messages
 {
-	internal interface IAddRemoveFraming
+	public interface IAppSequence
 	{
-		void AddFraming(List<byte> bytes);
-		void RemoveFraming(ref ReadOnlySpan<byte> bytes);
+		byte AppSequence { get; }
 	}
 }

@@ -14,25 +14,38 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using Microsoft.Extensions.Logging;
 using DSC.TLink.Extensions;
-using System.IO.Pipelines;
+using Microsoft.AspNetCore.SignalR.Protocol;
+using Microsoft.Extensions.Logging;
 using System.Buffers;
+using System.IO.Pipelines;
 
 namespace DSC.TLink
 {
 	public class TLinkClient
 	{
-		IDuplexPipe transport;
-		protected ILogger log;
+		IDuplexPipe _transport;
+        IDuplexPipe transport => _transport ?? throw new InvalidOperationException("Transport has not been initialized.");
 
-		public TLinkClient(IDuplexPipe transport, ILogger<TLinkClient> log)
-		{
-			this.transport = transport;
-			this.log = log;
-		}
+        protected ILogger log;
 
-		byte[]? _defaultHeader;
+        public TLinkClient(ILogger<TLinkClient> log)
+        {
+            this.log = log;
+        }
+
+        protected TLinkClient(IDuplexPipe transport, ILogger<TLinkClient> log) : this(log)
+        {
+            _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+        }
+
+        public void InitializeTransport(IDuplexPipe transport)
+        {
+            if (_transport != null) throw new InvalidOperationException("Transport has already been initialized.");
+            _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+        }
+
+        byte[]? _defaultHeader;
 		public byte[] DefaultHeader
 		{
 			get => _defaultHeader ??= Array.Empty<byte>();
@@ -52,8 +65,8 @@ namespace DSC.TLink
 		//3064 is the "ReceiverPort"  Not sure where this came from
 
 		#region Sending logic
-		public async Task SendMessage(byte[] payload, CancellationToken cancellationToken = default) => await SendMessage(DefaultHeader, payload, cancellationToken);
-		public async Task SendMessage(byte[] header, byte[] payload, CancellationToken cancellationToken = default)
+		public async Task SendMessageAsync(byte[] payload, CancellationToken cancellationToken = default) => await SendMessageAsync(DefaultHeader, payload, cancellationToken);
+		public async Task SendMessageAsync(byte[] header, byte[] payload, CancellationToken cancellationToken = default)
 		{
 			log?.LogTrace(() => $"Sending header '{Array2HexString(header)}' with message '{Array2HexString(payload)}'");
 
@@ -64,7 +77,7 @@ namespace DSC.TLink
 
 			log?.LogDebug("Sent     {packet}", packet);
 
-			await sendPacket(packet, cancellationToken);
+			await sendPacketAsync(packet, cancellationToken);
 
 			IEnumerable<byte> stuffBytes(IEnumerable<byte> inputBytes)
 			{
@@ -91,10 +104,10 @@ namespace DSC.TLink
 				}
 			}
 		}
-		protected virtual async Task sendPacket(byte[] packet, CancellationToken cancellationToken) => await transport.Output.WriteAsync(new ReadOnlyMemory<byte>(packet), cancellationToken);
+		protected virtual async Task sendPacketAsync(byte[] packet, CancellationToken cancellationToken) => await transport.Output.WriteAsync(new ReadOnlyMemory<byte>(packet), cancellationToken);
 		#endregion
 		#region Receiving logic
-		public async Task<TLinkReadResult> ReadMessage(CancellationToken cancellationToken = default)
+		public async Task<TLinkReadResult> ReadMessageAsync(CancellationToken cancellationToken = default)
 		{
 			(ReadOnlySequence<byte> packetSequence,
 			bool isCanceled,
@@ -133,25 +146,25 @@ namespace DSC.TLink
 
 		async Task<(ReadOnlySequence<byte> packet, bool isCanceled, bool isComplete)> readPacketBytes(CancellationToken cancellationToken)
 		{
-			//The while loop is here because its possible the first read attempt results in a partial buffer.
-			//In this case, tryGetPacket will fail, and the loop will retry and hopefully get more data in
-			//the buffer to complete the packet.
-			while (true)
-			{
-				ReadResult readResult = await transport.Input.ReadAtLeastAsync(2, cancellationToken);
-				if (readResult.IsCanceled)
-				{
-					throw new TLinkPacketException(TLinkPacketException.Code.Cancelled) { PacketData = Array2HexString(readResult.Buffer.ToArray()) };
-				}
-				ReadOnlySequence<byte> packetSlice;
-				if (tryGetPacketSlice(readResult.Buffer, out packetSlice))
-				{
-					return (packetSlice, readResult.IsCanceled, readResult.IsCompleted);
-				}
-			}
-		}
+            //The while loop is here in case the first read attempt results in a partial packet.
+            //In this case, tryGetPacket will fail, and the loop will retry and hopefully get more data in
+            //the buffer to complete the packet.
+            ReadOnlySequence<byte> packetSlice;
+            ReadResult readResult;
+            bool fullPacketHasBeenReceived;
+            do
+            {
+                readResult = await transport.Input.ReadAsync(cancellationToken);
+                if (readResult.IsCanceled)
+                {
+                    throw new TLinkPacketException(TLinkPacketException.Code.Cancelled) { PacketData = Array2HexString(readResult.Buffer.ToArray()) };
+                }
+                fullPacketHasBeenReceived = tryGetFullPacketSlice(readResult.Buffer, out packetSlice);
+            } while (!fullPacketHasBeenReceived);
+            return (packetSlice, readResult.IsCanceled, readResult.IsCompleted);
+        }
 
-		protected virtual bool tryGetPacketSlice(ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> packetSlice)
+        protected virtual bool tryGetFullPacketSlice(ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> packetSlice)
 		{
 			SequencePosition? delimiter = buffer.PositionOf((byte)0x7F);
 			if (!delimiter.HasValue)

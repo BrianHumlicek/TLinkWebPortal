@@ -16,11 +16,11 @@
 
 namespace DSC.TLink.ITv2.Enumerations
 {
-	internal enum ProtocolCompatibility
+	public enum ProtocolCompatibility : ushort
 	{
 		Unknown,
-		v129,
-		v202,
-		v223
+		v129 = 0x0129,
+        v202 = 0x0202,
+		v223 = 0x0223
 	}
 }

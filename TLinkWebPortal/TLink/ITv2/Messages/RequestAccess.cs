@@ -15,30 +15,14 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using DSC.TLink.ITv2.Enumerations;
-using DSC.TLink.Messages;
-using DSC.TLink.Messages.Extensions;
+using DSC.TLink.Serialization;
 
 namespace DSC.TLink.ITv2.Messages
 {
-	internal record RequestAccess : AppSequenceMessage
-	{
-		public byte[] Initializer { get => initializer.Get(); set => initializer.Set(value); }
-
-		public override ITv2Command Command => ITv2Command.Connection_Request_Access;
-
-		readonly IArrayProperty initializer = new LeadingLengthArray();
-		protected override List<byte> buildByteList()
-		{
-			var baseList = base.buildByteList();
-			baseList.AddRange(initializer.ToMessageBytes());
-			return baseList;
-		}
-
-		protected override ReadOnlySpan<byte> initialize(ReadOnlySpan<byte> bytes)
-		{
-			bytes = base.initialize(bytes);
-			bytes.PopAndSetValue(initializer);
-			return bytes;
-		}
-	}
+    [ITv2Command(ITv2Command.Connection_Request_Access)]
+    public partial record RequestAccess : IMessageData
+    {
+        [LeadingLengthArray]
+        public byte[] Initializer { get; init; } = Array.Empty<byte>();
+    }
 }

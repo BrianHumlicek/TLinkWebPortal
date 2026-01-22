@@ -1,8 +1,10 @@
 using DSC.TLink;
 using Microsoft.AspNetCore.Connections;
+using Microsoft.AspNetCore.Mvc.RazorPages;
 using System.Net;
 using TLinkWebPortal.Client.Pages;
 using TLinkWebPortal.Components;
+using TLinkWebPortal.Services;
 
 namespace TLinkWebPortal
 {
@@ -12,12 +14,24 @@ namespace TLinkWebPortal
 		{
 			var builder = WebApplication.CreateBuilder(args);
 
-			// Add services to the container.
-			builder.Services.AddRazorComponents()
+            // Load an optional per-instance JSON file so we can persist user changes.
+            // This file will be created/updated at runtime (content root).
+            builder.Configuration.AddJsonFile(SettingsService.TLinkSettingsFilename, optional: true, reloadOnChange: true);
+
+            // Bind TLinkSettings from configuration so IOptions/IOptionsMonitor are available
+            builder.Services.Configure<TLinkSettings>(builder.Configuration.GetSection(SettingsService.TLinkSettingsSectionName));
+
+            // register settings service that will bind to configuration and persist changes
+            builder.Services.AddSingleton<SettingsService>();
+
+            // Add services to the container.
+            builder.Services.AddRazorComponents()
 				.AddInteractiveServerComponents()
 				.AddInteractiveWebAssemblyComponents();
 
-			builder.UseITv2();
+            // read ServerPort from configuration and pass it to UseITv2
+            var serverPort = builder.Configuration.GetServerPort();
+			builder.UseITv2(serverPort);
 
 			var app = builder.Build();
 

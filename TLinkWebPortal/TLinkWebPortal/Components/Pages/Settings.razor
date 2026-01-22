@@ -1,0 +1,95 @@
+@page "/settings"
+@using System.ComponentModel
+@using System.Reflection
+@using TLinkWebPortal.Services
+@inject NavigationManager NavManager
+@inject SettingsService SettingsService
+
+<PageTitle>Settings</PageTitle>
+
+<div class="container my-4">
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">Settings</h5>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-12 col-md-4">
+                    <label class="form-label">Server Port</label>
+                    <input class="form-control"
+                           type="number"
+                           min="1" max="65535"
+                           @bind="model.ServerPort"
+                           title="@(GetDescription<TLinkSettings>(nameof(TLinkSettings.ServerPort)))" />
+                    <div class="form-text">@(GetDescription<TLinkSettings>(nameof(TLinkSettings.ServerPort)))</div>
+                </div>
+
+                <div class="col-12 col-md-8">
+                    <label class="form-label">Integration Access Code (Type 1)</label>
+                    <input class="form-control"
+                           type="text"
+                           @bind="model.IntegrationAccessCodeType1"
+                           title="@(GetDescription<TLinkSettings>(nameof(TLinkSettings.IntegrationAccessCodeType1)))" />
+                    <div class="form-text">@(GetDescription<TLinkSettings>(nameof(TLinkSettings.IntegrationAccessCodeType1)))</div>
+                </div>
+
+                <div class="col-12 col-md-8">
+                    <label class="form-label">Integration Access Code (Type 2)</label>
+                    <input class="form-control"
+                           type="text"
+                           @bind="model.IntegrationAccessCodeType2"
+                           title="@(GetDescription<TLinkSettings>(nameof(TLinkSettings.IntegrationAccessCodeType2)))" />
+                    <div class="form-text">@(GetDescription<TLinkSettings>(nameof(TLinkSettings.IntegrationAccessCodeType2)))</div>
+                </div>
+
+                <div class="col-12 col-md-8">
+                    <label class="form-label">Integration Identification Number</label>
+                    <input class="form-control"
+                           type="text"
+                           @bind="model.IntegrationIdentificationNumber"
+                           title="@(GetDescription<TLinkSettings>(nameof(TLinkSettings.IntegrationIdentificationNumber)))" />
+                    <div class="form-text">@(GetDescription<TLinkSettings>(nameof(TLinkSettings.IntegrationIdentificationNumber)))</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card-footer text-end">
+            <button class="btn btn-secondary me-2" @onclick="Cancel">Cancel</button>
+            <button class="btn btn-primary" @onclick="Save">Save</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private TLinkSettings model = new();
+
+    protected override void OnInitialized()
+    {
+        var s = SettingsService.Settings;
+        model = new TLinkSettings
+        {
+            ServerPort = s.ServerPort,
+            IntegrationAccessCodeType1 = s.IntegrationAccessCodeType1,
+            IntegrationAccessCodeType2 = s.IntegrationAccessCodeType2,
+            IntegrationIdentificationNumber = s.IntegrationIdentificationNumber
+        };
+    }
+
+    private void Save()
+    {
+        SettingsService.UpdateAndPersist(model);
+        NavManager.NavigateTo("/");
+    }
+
+    private void Cancel()
+    {
+        NavManager.NavigateTo("/");
+    }
+
+    private static string GetDescription<T>(string propertyName)
+    {
+        var prop = typeof(T).GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
+        var desc = prop?.GetCustomAttribute<DescriptionAttribute>()?.Description;
+        return desc ?? string.Empty;
+    }
+}

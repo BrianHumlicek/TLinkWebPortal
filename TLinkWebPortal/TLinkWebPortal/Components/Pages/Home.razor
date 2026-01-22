@@ -1,7 +1,147 @@
 ﻿@page "/"
 
+@inject NavigationManager NavManager
+
 <PageTitle>Home</PageTitle>
 
-<h1>Hello, world!</h1>
+<div class="container my-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0">System Control</h2>
+        <button class="btn btn-outline-secondary" @onclick="OpenSettings">Settings</button>
+    </div>
 
-Welcome to your new app.
+    <div class="row">
+        <!-- Controls -->
+        <div class="col-md-6 mb-4">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title">Alarm</h5>
+                    <div class="d-grid gap-3">
+                        <button class="btn btn-danger btn-lg" @onclick="ArmSystem" aria-pressed="@isArmed">
+                            Arm System
+                        </button>
+                        <button class="btn btn-success btn-lg" @onclick="DisarmSystem" aria-pressed="@( !isArmed )">
+                            Disarm System
+                        </button>
+                    </div>
+
+                    <hr />
+
+                    <div class="mt-3">
+                        <strong>Status:</strong>
+                        <span class="ms-2 badge @(isArmed ? "bg-danger" : "bg-secondary")">
+                            @(isArmed ? "Armed" : "Disarmed")
+                        </span>
+                        <div class="text-muted small mt-1">
+                            Last change: @lastStateChange.ToLocalTime().ToString("g")
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Zones -->
+        <div class="col-md-6 mb-4">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title">Zones</h5>
+
+                    <div class="list-group">
+                        @foreach (var z in zones)
+                        {
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <div class="fw-semibold">@z.Name</div>
+                                    <div class="text-muted small">Last updated: @z.LastChanged.ToLocalTime().ToString("g")</div>
+                                </div>
+
+                                <div class="text-end">
+                                    @if (z.IsOpen)
+                                    {
+                                        <span class="badge bg-danger me-2">Open</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-success me-2">Closed</span>
+                                    }
+
+                                    @if (z.IsBypassed)
+                                    {
+                                        <span class="badge bg-warning text-dark me-2">Bypassed</span>
+                                    }
+
+                                    <button class="btn btn-outline-sm btn-outline-secondary btn-sm me-1" @onclick="@(() => ToggleBypass(z))">
+                                        @(z.IsBypassed ? "Unbypass" : "Bypass")
+                                    </button>
+                                    <button class="btn btn-outline-sm btn-primary btn-sm" @onclick="@(() => ToggleZoneState(z))">
+                                        Toggle
+                                    </button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="mt-3 text-muted small">
+                        (Use the Toggle button to simulate zone open/close. Bypassed zones are ignored by the alarm.)
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool isArmed = false;
+    private DateTime lastStateChange = DateTime.UtcNow;
+
+    private List<Zone> zones = new()
+    {
+        new Zone("Front Door", false, false, DateTime.UtcNow),
+        new Zone("Back Door", false, false, DateTime.UtcNow),
+        new Zone("Garage", false, false, DateTime.UtcNow),
+        new Zone("Living Room Motion", false, false, DateTime.UtcNow),
+        new Zone("Basement Window", true, false, DateTime.UtcNow),
+    };
+
+    private void ArmSystem()
+    {
+        isArmed = true;
+        lastStateChange = DateTime.UtcNow;
+        // TODO: call backend service to arm the real system
+    }
+
+    private void DisarmSystem()
+    {
+        isArmed = false;
+        lastStateChange = DateTime.UtcNow;
+        // TODO: call backend service to disarm the real system
+    }
+
+    // Toggle a zone open/closed by replacing the item with a 'with' copy
+    private void ToggleZoneState(Zone z)
+    {
+        var idx = zones.IndexOf(z);
+        if (idx >= 0)
+        {
+            zones[idx] = zones[idx] with { IsOpen = !zones[idx].IsOpen, LastChanged = DateTime.UtcNow };
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleBypass(Zone z)
+    {
+        var idx = zones.IndexOf(z);
+        if (idx >= 0)
+        {
+            zones[idx] = zones[idx] with { IsBypassed = !zones[idx].IsBypassed, LastChanged = DateTime.UtcNow };
+            StateHasChanged();
+        }
+    }
+
+    private void OpenSettings()
+    {
+        NavManager.NavigateTo("/settings");
+    }
+	public sealed record Zone(string Name, bool IsOpen, bool IsBypassed, DateTime LastChanged);
+
+}

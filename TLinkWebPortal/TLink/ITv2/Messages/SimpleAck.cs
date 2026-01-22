@@ -14,32 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using DSC.TLink.Messages.Extensions;
-using DSC.TLink.Messages;
+using DSC.TLink.ITv2.Enumerations;
 
 namespace DSC.TLink.ITv2.Messages
 {
-	internal record SimpleAck : TLink.Messages.NetworkByteMessage
-	{
-		protected override IAddRemoveFraming? framing => new ITv2MessageFraming();
-		public byte HostSequence { get; set; }	//This is always zero
-		public byte RemoteSequence { get; set; }
-		protected override List<byte> buildByteList()
-		{
-			List<byte> result =
-			[
-				HostSequence,
-				RemoteSequence
-			];
-
-			return result;
-		}
-		protected override ReadOnlySpan<byte> initialize(ReadOnlySpan<byte> workingBuffer)
-		{
-			workingBuffer.PopAndSetValue((value) => HostSequence = value);
-			workingBuffer.PopAndSetValue((value) => RemoteSequence = value);
-
-			return workingBuffer;
-		}
-	}
+    internal record SimpleAck : IMessageData
+    {
+    }
 }
