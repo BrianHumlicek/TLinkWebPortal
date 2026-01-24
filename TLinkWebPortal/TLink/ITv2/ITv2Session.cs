@@ -21,7 +21,9 @@ using DSC.TLink.ITv2.Messages;
 using MediatR;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System.IO.Pipelines;
+using System.Transactions;
 
 namespace DSC.TLink.ITv2
 {
@@ -30,8 +32,8 @@ namespace DSC.TLink.ITv2
         private readonly ILogger _log;
         private readonly TLinkClient _tlinkClient;
         private readonly IMediator _mediator;
-        private readonly IConfiguration _configuration;
-        private readonly List<ITransaction> _transactions = new();
+        private readonly ITv2Settings _itv2Settings;
+        private readonly List<ITransaction> _waitingTransactions = new();
         private readonly SemaphoreSlim _transactionSemaphore = new SemaphoreSlim(1, 1);
         private readonly CancellationTokenSource _shutdownCts = new CancellationTokenSource();
         
@@ -40,11 +42,15 @@ namespace DSC.TLink.ITv2
         private EncryptionHandler? _encryptionHandler;
         private int _disposed;
 
-        public ITv2Session(TLinkClient tlinkClient, IMediator mediator, IConfiguration configuration, ILogger<ITv2Session> logger)
+        public ITv2Session(
+            TLinkClient tlinkClient, 
+            IMediator mediator, 
+            IOptions<ITv2Settings> settingsOptions, 
+            ILogger<ITv2Session> logger)
         {
             _tlinkClient = tlinkClient ?? throw new ArgumentNullException(nameof(tlinkClient));
             _mediator = mediator ?? throw new ArgumentNullException(nameof(mediator));
-            _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+            _itv2Settings = settingsOptions.Value ?? throw new ArgumentNullException(nameof(settingsOptions));
             _log = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -73,7 +79,7 @@ namespace DSC.TLink.ITv2
                     
                     try
                     {
-                        message = await WaitForMessageAsync(linkedToken).ConfigureAwait(false);
+                         message = await WaitForMessageAsync(linkedToken).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (linkedToken.IsCancellationRequested)
                     {
@@ -92,26 +98,31 @@ namespace DSC.TLink.ITv2
                     
                     try
                     {
-                        if (TryGetCorrelatedTransaction(message, out var pendingTransaction))
-                        {
-                            await pendingTransaction!.ContinueAsync(message, linkedToken).ConfigureAwait(false);
-                            
-                            if (pendingTransaction.Completed)
-                            {
-                                _transactions.Remove(pendingTransaction);
-                                _log.LogDebug("Transaction completed and removed: {MessageType}", message.messageData.GetType().Name);
-                            }
-                        }
-                        else
+						bool messageHandled = false;
+						foreach (var waitingTransaction in _waitingTransactions)
+						{
+							if (await waitingTransaction.TryContinueAsync(message, linkedToken))
+							{
+								messageHandled = true;
+                                break;
+							}
+						}
+                        if (!messageHandled)
                         {
                             ITransaction newTransaction = TransactionFactory.CreateTransaction(message.messageData, this);
-                            await newTransaction.BeginInboundAsync(message, linkedToken).ConfigureAwait(false);
+							_log.LogDebug("New transaction started: {MessageType}", message.messageData.GetType().Name);
+							await newTransaction.BeginInboundAsync(message, linkedToken).ConfigureAwait(false);
                             
-                            if (!newTransaction.Completed)
+                            if (newTransaction.CanContinue)
                             {
-                                _transactions.Add(newTransaction);
-                                _log.LogDebug("New transaction started: {MessageType}", message.messageData.GetType().Name);
+                                _waitingTransactions.Add(newTransaction);
                             }
+                        }
+                        var staleTransactions = _waitingTransactions.Where(tx => !tx.CanContinue).ToList();
+                        foreach (var stale in staleTransactions)
+                        {
+                            _log.LogDebug("Removing completed transaction: {Type}", stale.GetType().Name);
+                            _waitingTransactions.Remove(stale);
                         }
                     }
                     finally
@@ -120,7 +131,7 @@ namespace DSC.TLink.ITv2
                     }
 
                     // Periodic cleanup of stale transactions
-                    await CleanupStaleTransactionsAsync(linkedToken).ConfigureAwait(false);
+                    //await CleanupStaleTransactionsAsync(linkedToken).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException) when (linkedToken.IsCancellationRequested)
@@ -163,9 +174,9 @@ namespace DSC.TLink.ITv2
                 ITransaction newTransaction = TransactionFactory.CreateTransaction(messageData, this);
                 await newTransaction.BeginOutboundAsync(message, linkedToken).ConfigureAwait(false);
                 
-                if (!newTransaction.Completed)
+                if (newTransaction.CanContinue)
                 {
-                    _transactions.Add(newTransaction);
+                    _waitingTransactions.Add(newTransaction);
                     _log.LogDebug("Outbound transaction started: {MessageType}", messageData.GetType().Name);
                 }
             }
@@ -196,8 +207,8 @@ namespace DSC.TLink.ITv2
             {
                 try
                 {
-                    var transactionCount = _transactions.Count;
-                    foreach (var transaction in _transactions.ToArray())
+                    var transactionCount = _waitingTransactions.Count;
+                    foreach (var transaction in _waitingTransactions.ToArray())
                     {
                         try
                         {
@@ -208,7 +219,7 @@ namespace DSC.TLink.ITv2
                             _log.LogWarning(ex, "Error aborting transaction during shutdown");
                         }
                     }
-                    _transactions.Clear();
+                    _waitingTransactions.Clear();
                     _log.LogInformation("Aborted {Count} pending transactions", transactionCount);
                 }
                 finally
@@ -267,12 +278,6 @@ namespace DSC.TLink.ITv2
                 messageData: MessageFactory.DeserializeMessage(messageBytes));
         }
 
-        bool TryGetCorrelatedTransaction(ITv2Message message, out ITransaction? transaction)
-        {
-            transaction = _transactions.FirstOrDefault(tx => tx.IsCorrelated(message));
-            return transaction != null;
-        }
-
         async Task SendMessageAsync(ITv2Message message, CancellationToken cancellationToken)
         {
             var messageBytes = new List<byte>(
@@ -288,7 +293,7 @@ namespace DSC.TLink.ITv2
         async Task SendMessageBytesAsync(byte[] messageBytes, CancellationToken cancellationToken)
         {
             _log.LogTrace("Sending ITv2 frame: Length={Length}", messageBytes.Length);
-
+            _log.LogDebug($"Sending message (pre encryption) {ILoggerExtensions.Enumerable2HexString(messageBytes)}");
             var encryptedBytes = _encryptionHandler?.HandleOutboundData(messageBytes) ?? messageBytes;
             await _tlinkClient.SendMessageAsync(encryptedBytes, cancellationToken).ConfigureAwait(false);
         }
@@ -305,8 +310,8 @@ namespace DSC.TLink.ITv2
             
             _encryptionHandler = encryptionType switch
             {
-                EncryptionType.Type1 => new Type1EncryptionHandler(_configuration),
-                EncryptionType.Type2 => new Type2EncryptionHandler(_configuration),
+                EncryptionType.Type1 => new Type1EncryptionHandler(_itv2Settings),
+                EncryptionType.Type2 => new Type2EncryptionHandler(_itv2Settings),
                 _ => throw new NotSupportedException($"Unsupported encryption type: {encryptionType}")
             };
 
@@ -319,20 +324,21 @@ namespace DSC.TLink.ITv2
             if (_localSequence % 100 != 0) return;
 
             if (!await _transactionSemaphore.WaitAsync(0, cancellationToken).ConfigureAwait(false))
-                return; // Skip if lock not immediately available
+                return // Skip if lock not immediately available
+                ;
 
             try
             {
                 var now = DateTime.UtcNow;
-                var stale = _transactions
-                    .Where(tx => tx.IsTimedOut(now))
+                var stale = _waitingTransactions
+                    .Where(tx => !tx.CanContinue)
                     .ToArray();
 
                 foreach (var tx in stale)
                 {
                     _log.LogWarning("Removing stale transaction: {Type}", tx.GetType().Name);
                     tx.Abort();
-                    _transactions.Remove(tx);
+                    _waitingTransactions.Remove(tx);
                 }
 
                 if (stale.Length > 0)

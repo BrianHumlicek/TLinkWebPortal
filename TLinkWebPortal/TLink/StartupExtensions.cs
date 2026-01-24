@@ -20,22 +20,37 @@ using System.Net;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.Extensions.DependencyInjection;
 using DSC.TLink.ITv2;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace DSC.TLink
 {
-	public static class WebApplicationBuilderExtensions
+	public static class StartupExtensions
 	{
-		public static WebApplicationBuilder UseITv2(this WebApplicationBuilder builder, int port = 3072)
+		public static WebApplicationBuilder UseITv2(this WebApplicationBuilder builder)
 		{
-			builder.WebHost.ConfigureKestrel(options =>
+            builder.Services.Configure<ITv2Settings>(builder.Configuration.GetSection(ITv2Settings.SectionName));
+            builder.Services.AddSingleton(sp => 
+                sp.GetRequiredService<IOptions<ITv2Settings>>().Value);
+
+			builder.WebHost.ConfigureKestrel((context, options) =>
 			{
-				options.ListenAnyIP(port, listenOptions =>
+                var listenPort = context.Configuration.GetValue($"{ITv2Settings.SectionName}:{nameof(ITv2Settings.ListenPort)}", ITv2Settings.DefaultListenPort);
+                
+                // Configure ITv2 panel connection port
+                options.ListenAnyIP(listenPort, listenOptions =>
 				{
 					listenOptions.UseConnectionHandler<ITv2ConnectionHandler>();
 				});
+                
+                // Re-add the default web UI port (since ConfigureKestrel disables defaults)
+                options.ListenLocalhost(5181); // HTTP
+                options.ListenLocalhost(7013, listenOptions => listenOptions.UseHttps()); // HTTPS
 			});
-            builder.Services.AddTransient<TLinkClient>();
-			builder.Services.AddTransient<ITv2Session>();
+
+            builder.Services.AddScoped<TLinkClient>();
+            builder.Services.AddScoped<ITv2Session>();
+
 			builder.Services.AddMediatR((configuration) =>
 			{
 				configuration.RegisterServicesFromAssemblyContaining<ITv2Session>();

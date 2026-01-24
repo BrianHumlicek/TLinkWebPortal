@@ -1,6 +1,5 @@
 ﻿using DSC.TLink.ITv2.Enumerations;
 using DSC.TLink.Serialization;
-using MemoryPack;
 using System;
 using System.Collections.Immutable;
 using System.Linq;
@@ -50,6 +49,8 @@ namespace DSC.TLink.ITv2.Messages
         /// </summary>
         public static IMessageData DeserializeMessage(ReadOnlySpan<byte> bytes)
         {
+            if (bytes.Length == 0)
+                return new SimpleAck();
             if (bytes.Length < 2)
                 throw new ArgumentException("Message too short to contain command", nameof(bytes));
 
@@ -96,6 +97,11 @@ namespace DSC.TLink.ITv2.Messages
         {
             if (message == null) throw new ArgumentNullException(nameof(message));
 
+            if (message is SimpleAck)
+            {
+                return ReadOnlySpan<byte>.Empty;
+            }
+
             var messageType = message.GetType();
 
             if (!_typeToCommand.TryGetValue(messageType, out var command))
@@ -130,12 +136,12 @@ namespace DSC.TLink.ITv2.Messages
         /// Serialize just the message payload without the command header.
         /// Used when the command is already in the protocol frame.
         /// </summary>
-        public static ReadOnlySpan<byte> SerializeMessagePayload(IMessageData message)
+        public static List<byte> SerializeMessagePayload(IMessageData message)
         {
             if (message == null) throw new ArgumentNullException(nameof(message));
 
             var messageType = message.GetType();
-            return MemoryPackSerializer.Serialize(messageType, message);
+            return BinarySerializer.Serialize(message);
         }
 
         public static ITv2Command GetCommand(IMessageData message)

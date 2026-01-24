@@ -1,108 +1,90 @@
-using System;
-using System.ComponentModel;
-using System.IO;
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Options;
+//using System;
+//using System.ComponentModel;
+//using System.IO;
+//using System.Text.Json;
+//using System.Text.Json.Nodes;
+//using Microsoft.Extensions.Hosting;
+//using Microsoft.Extensions.Options;
+//using System.Threading.Tasks;
+//using System.Collections.Generic;
+//using Microsoft.Extensions.Logging;
 
-namespace TLinkWebPortal.Services
-{
-    public sealed class SettingsService
-    {
-        public const int DefaultServerPort = 3072;
+//namespace TLinkWebPortal.Services
+//{
+//    public class SettingsService
+//    {
+//        public const string TLinkSettingsFilename = "tlinkSettings.json";
+//        public const string TLinkSettingsSectionName = "TLink";
 
-        public const string TLinkSettingsFilename = "TLinkSettings.json";
-        public const string TLinkSettingsSectionName = "TLinkSettings";
+//        private readonly IOptionsMonitor<TLinkSettings> _options;
+//        private readonly IWebHostEnvironment _env;
+//        private readonly ILogger<SettingsService> _log;
+//        private readonly string _settingsPath;
+//        private readonly SemaphoreSlim _fileLock = new(1, 1);
 
-        private readonly IOptionsMonitor<TLinkSettings> _optionsMonitor;
-        private readonly IHostEnvironment _env;
-        private readonly object _sync = new();
+//        public SettingsService(
+//            IOptionsMonitor<TLinkSettings> options,
+//            IWebHostEnvironment env,
+//            ILogger<SettingsService> log)
+//        {
+//            _options = options;
+//            _env = env;
+//            _log = log;
+//            _settingsPath = Path.Combine(_env.ContentRootPath, TLinkSettingsFilename);
+//        }
 
-        /// <summary>
-        /// Expose current settings via IOptionsMonitor so consumers get the framework-standard behavior
-        /// and respond to reloadOnChange.
-        /// </summary>
-        public TLinkSettings Settings => _optionsMonitor.CurrentValue;
+//        public TLinkSettings GetSettings() => _options.CurrentValue;
 
-        public SettingsService(IOptionsMonitor<TLinkSettings> optionsMonitor, IHostEnvironment env)
-        {
-            _optionsMonitor = optionsMonitor ?? throw new ArgumentNullException(nameof(optionsMonitor));
-            _env = env ?? throw new ArgumentNullException(nameof(env));
-        }
+//        public async Task UpdateSettingsAsync(TLinkSettings settings)
+//        {
+//            await _fileLock.WaitAsync();
+//            try
+//            {
+//                Dictionary<string, object>? rootSettings = null;
 
-        /// <summary>
-        /// Persist updated settings to the runtime JSON file (userSettings.json).
-        /// Uses the application's content root as the storage location and writes atomically.
-        /// </summary>
-        public void UpdateAndPersist(TLinkSettings s)
-        {
-            if (s == null) throw new ArgumentNullException(nameof(s));
+//                if (File.Exists(_settingsPath))
+//                {
+//                    var json = await File.ReadAllTextAsync(_settingsPath);
+//                    rootSettings = JsonSerializer.Deserialize<Dictionary<string, object>>(json);
+//                }
 
-            lock (_sync)
-            {
-                PersistToFile(s);
-            }
-        }
+//                rootSettings ??= new Dictionary<string, object>();
+//                rootSettings[TLinkSettingsSectionName] = settings;
 
-        /// <summary>
-        /// Persist the provided settings into userSettings.json under the "TLinkSettings" node.
-        /// If the file exists other sections are preserved.
-        /// </summary>
-        private void PersistToFile(TLinkSettings s)
-        {
-            var path = Path.Combine(_env.ContentRootPath, TLinkSettingsFilename);
+//                var options = new JsonSerializerOptions
+//                {
+//                    WriteIndented = true
+//                };
 
-            JsonObject root;
+//                var updatedJson = JsonSerializer.Serialize(rootSettings, options);
+//                await File.WriteAllTextAsync(_settingsPath, updatedJson);
 
-            if (File.Exists(path))
-            {
-                try
-                {
-                    var text = File.ReadAllText(path);
-                    var parsed = JsonNode.Parse(text);
-                    root = parsed?.AsObject() ?? new JsonObject();
-                }
-                catch
-                {
-                    // If parse fails, start from a fresh object to avoid corrupt file issues.
-                    root = new JsonObject();
-                }
-            }
-            else
-            {
-                root = new JsonObject();
-            }
+//                _log.LogInformation("Updated TLink settings in {File}", TLinkSettingsFilename);
+//            }
+//            finally
+//            {
+//                _fileLock.Release();
+//            }
+//        }
+//    }
+//    public static class IConfigurationExtensions
+//    {
+//        public static int GetServerPort(this IConfiguration configuration)
+//        {
+//            return configuration.GetValue<int>($"{SettingsService.TLinkSettingsSectionName}:{nameof(TLinkSettings.ServerPort)}", SettingsService.DefaultServerPort);
+//        }
+//    }
 
-            // Serialize provided settings into the "TLinkSettings" property
-            var options = new JsonSerializerOptions { WriteIndented = true };
-            root[TLinkSettingsSectionName] = JsonSerializer.SerializeToNode(s, options);
+//    public sealed class TLinkSettings
+//    {
+//        [Description("Integration Notification port [851][429]")]
+//        public int ServerPort { get; set; } = SettingsService.DefaultServerPort;
+//        [Description("Type 1 Integration Access Code [851][423,450,477,504]")]
+//        public string IntegrationAccessCodeType1 { get; set; } = "12345678";
+//        [Description("Type 2 Integration Access Code [851][700,701,702,703]")]
+//        public string IntegrationAccessCodeType2 { get; set; } = "23456789";
+//        [Description("Integration Identification Number [851][422]")]
+//        public string IntegrationIdentificationNumber { get; set; } = "87654321";
 
-            // Write atomically
-            var tmp = path + ".tmp";
-            File.WriteAllText(tmp, root.ToJsonString(options));
-            File.Copy(tmp, path, overwrite: true);
-            File.Delete(tmp);
-        }
-    }
-    public static class IConfigurationExtensions
-    {
-        public static int GetServerPort(this IConfiguration configuration)
-        {
-            return configuration.GetValue<int>($"{SettingsService.TLinkSettingsSectionName}:{nameof(TLinkSettings.ServerPort)}", SettingsService.DefaultServerPort);
-        }
-    }
-
-    public sealed class TLinkSettings
-    {
-        [Description("Integration Notification port [851][429]")]
-        public int ServerPort { get; set; } = SettingsService.DefaultServerPort;
-        [Description("Type 1 Integration Access Code [851][423,450,477,504]")]
-        public string IntegrationAccessCodeType1 { get; set; } = "12345678";
-        [Description("Type 2 Integration Access Code [851][700,701,702,703]")]
-        public string IntegrationAccessCodeType2 { get; set; } = "23456789";
-        [Description("Integration Identification Number [851][422]")]
-        public string IntegrationIdentificationNumber { get; set; } = "87654321";
-
-    }
-}
+//    }
+//}

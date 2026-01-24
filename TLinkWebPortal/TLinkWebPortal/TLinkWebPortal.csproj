@@ -10,6 +10,7 @@
     <ProjectReference Include="..\TLinkWebPortal.Client\TLinkWebPortal.Client.csproj" />
     <ProjectReference Include="..\TLink\DSC.TLink.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="8.0.2" />
+    <PackageReference Include="MudBlazor" Version="8.15.0" />
   </ItemGroup>
 
 </Project>

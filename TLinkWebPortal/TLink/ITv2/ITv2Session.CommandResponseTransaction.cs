@@ -28,9 +28,15 @@ namespace DSC.TLink.ITv2
 				_state = State.Initial;
 			}
 
-			protected override bool Completed => _state == State.Complete;
+            protected override bool CanContinue => _state switch
+            {
+                State.AwaitingCommandResponse => true,
+                State.AwaitingSimpleAck => true,
+                _ => false
+            };
 
-			protected override async Task InitializeInboundAsync(CancellationToken cancellationToken)
+
+            protected override async Task InitializeInboundAsync(CancellationToken cancellationToken)
 			{
 				// Inbound: Remote sent us a command, send CommandResponse back
 				_state = State.SendingCommandResponse;
@@ -70,8 +76,6 @@ namespace DSC.TLink.ITv2
 						_state = State.SendingSimpleAck;
 						await SendMessageAsync(new SimpleAck(), cancellationToken);
 						_state = State.Complete;
-						Complete(); // Cancel timeout
-						
 						session._log.LogDebug("CommandResponse transaction completed with code {Code}", _responseCode);
 						break;
 
@@ -85,8 +89,6 @@ namespace DSC.TLink.ITv2
 						}
 
 						_state = State.Complete;
-						Complete(); // Cancel timeout
-						
 						session._log.LogDebug("CommandResponse transaction completed");
 						break;
 
@@ -94,16 +96,6 @@ namespace DSC.TLink.ITv2
 						session._log.LogWarning("Unexpected message in state {State}", _state);
 						break;
 				}
-			}
-
-			protected override void OnTimeout()
-			{
-				session._log.LogError("CommandResponse transaction timed out in state {State}", _state);
-			}
-
-			protected override void OnAbort()
-			{
-				session._log.LogWarning("CommandResponse transaction aborted in state {State}", _state);
 			}
 
 			/// <summary>

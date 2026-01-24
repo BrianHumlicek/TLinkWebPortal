@@ -16,31 +16,54 @@
 
 using DSC.TLink.ITv2;
 using Microsoft.AspNetCore.Connections;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace DSC.TLink
 {
 	internal class ITv2ConnectionHandler : ConnectionHandler
 	{
-		ILogger<ITv2ConnectionHandler> log;
-		ITv2Session session;
-		public ITv2ConnectionHandler(ITv2Session session, ILogger<ITv2ConnectionHandler> logger)
+		private readonly IServiceProvider _serviceProvider;
+		private readonly ILogger<ITv2ConnectionHandler> _log;
+
+		public ITv2ConnectionHandler(
+			IServiceProvider serviceProvider, 
+			ILogger<ITv2ConnectionHandler> log)
 		{
-			this.log = logger;
-			this.session = session;
+			_serviceProvider = serviceProvider;
+			_log = log;
 		}
-		public async override Task OnConnectedAsync(ConnectionContext connection)
+
+		public override async Task OnConnectedAsync(ConnectionContext connection)
 		{
-			log.LogInformation($"Connection request from {connection.RemoteEndPoint}");
+			_log.LogInformation("Connection request from {RemoteEndPoint}", connection.RemoteEndPoint);
+			
 			try
 			{
-				await session.ListenAsync(connection.Transport);
+				// Create a new scope per connection
+				await using var scope = _serviceProvider.CreateAsyncScope();
+				
+				// Get scoped instances - these will be the same for this connection
+				var session = scope.ServiceProvider.GetRequiredService<ITv2Session>();
+				var client = scope.ServiceProvider.GetRequiredService<TLinkClient>();
+				
+				// Or create manually (simpler for connection-based lifecycle):
+				// var settings = _serviceProvider.GetRequiredService<ITv2Settings>();
+				// var mediator = _serviceProvider.GetRequiredService<IMediator>();
+				// var logger = _serviceProvider.GetRequiredService<ILogger<ITv2Session>>();
+				// var client = new TLinkClient(logger);
+				// var session = new ITv2Session(client, mediator, settings, logger);
+				
+				await session.ListenAsync(connection.Transport, connection.ConnectionClosed);
 			}
 			catch (Exception ex)
 			{
-				log.LogError(ex, "ITv2 connection error");
+				_log.LogError(ex, "ITv2 connection error");
 			}
-			log.LogInformation("TLink disconnected from {RemoteEndPoint}", connection.RemoteEndPoint);
+			finally
+			{
+				_log.LogInformation("TLink disconnected from {RemoteEndPoint}", connection.RemoteEndPoint);
+			}
 		}
 	}
 }

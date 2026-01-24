@@ -14,15 +14,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using MemoryPack;
 using DSC.TLink.ITv2.Enumerations;
 
 namespace DSC.TLink.ITv2.Messages
 {
-	[MemoryPackable]
 	[ITv2Command(ITv2Command.Command_Response)]
 	internal partial record CommandResponse : IMessageData
 	{
-		public CommandResponseCode ResponseCode { get; init; }
+        public byte AppSequence { get; init; }
+        public CommandResponseCode ResponseCode { get; init; }
 	}
 }

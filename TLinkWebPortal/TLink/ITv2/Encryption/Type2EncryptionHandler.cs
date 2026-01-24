@@ -7,48 +7,70 @@
 // (at your option) any later version.
 //
 // This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY, without even the implied warranty of
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using Microsoft.Extensions.Configuration;
 using System.Security.Cryptography;
 
 namespace DSC.TLink.ITv2.Encryption
 {
-	internal class Type2EncryptionHandler : EncryptionHandler
-	{
-		readonly byte[] integrationAccessCode;
-		public Type2EncryptionHandler(IConfiguration configuration) : this(configuration[ConfigurationSettings.IntegrationAccessCodeType2])
-		{
+    internal class Type2EncryptionHandler : EncryptionHandler
+    {
+        private readonly byte[] _integrationAccessCode;
 
-		}
-		/// <summary>
-		/// Configure type 2 encryption with parameter 'Integration Access Code'
-		/// ID's [851][700,701,702,703] for panel integration session 1-4
-		/// </summary>
-		/// <param name="integrationAccessCode">Type 2 Integration Access Code [851][700,701,702,703]</param>
-		public Type2EncryptionHandler(string integrationAccessCode)
-		{
-			if (integrationAccessCode == null) throw new ArgumentNullException(nameof(integrationAccessCode));
-			if (integrationAccessCode.Length != 32) throw new ArgumentException(nameof(integrationAccessCode));
-			this.integrationAccessCode = Convert.FromHexString(integrationAccessCode);
-		}
-		public override void ConfigureOutboundEncryption(byte[] remoteInitializer)  //Notes in the code indicate this might be the MAC address of the remote device.  If so, wow...
-		{
-			if (remoteInitializer.Length != 16) throw new ArgumentException(nameof(remoteInitializer));
-			byte[] outboundKey = encryptKeyData(integrationAccessCode, remoteInitializer);
-			activateOutbound(outboundKey);
-		}
-		public override byte[] ConfigureInboundEncryption()
-		{
-			byte[] localInitializer = RandomNumberGenerator.GetBytes(16);
-			byte[] outboundKey = encryptKeyData(integrationAccessCode, localInitializer);
-			activateOutbound(outboundKey);
-			return localInitializer;
-		}
-	}
+        /// <summary>
+        /// Create Type2 encryption handler from configuration
+        /// </summary>
+        public Type2EncryptionHandler(ITv2Settings settings)
+            : this(settings.IntegrationAccessCodeType2 
+                ?? throw new InvalidOperationException("IntegrationAccessCodeType2 is not configured"))
+        {
+        }
+
+        /// <summary>
+        /// Configure type 2 encryption with parameter 'Integration Access Code'
+        /// ID's [851][700,701,702,703] for panel integration session 1-4
+        /// </summary>
+        /// <param name="integrationAccessCode">Type 2 Integration Access Code (32-character hex string)</param>
+        public Type2EncryptionHandler(string integrationAccessCode)
+        {
+            if (string.IsNullOrEmpty(integrationAccessCode))
+                throw new ArgumentNullException(nameof(integrationAccessCode));
+            
+            if (integrationAccessCode.Length != 32)
+                throw new ArgumentException("Type 2 integration access code must be 32 hex characters (16 bytes)", nameof(integrationAccessCode));
+
+            try
+            {
+                _integrationAccessCode = Convert.FromHexString(integrationAccessCode);
+            }
+            catch (FormatException ex)
+            {
+                throw new ArgumentException("Type 2 integration access code must be a valid hex string", nameof(integrationAccessCode), ex);
+            }
+        }
+
+        public override void ConfigureOutboundEncryption(byte[] remoteInitializer)
+        {
+            if (remoteInitializer == null)
+                throw new ArgumentNullException(nameof(remoteInitializer));
+            if (remoteInitializer.Length != 16)
+                throw new ArgumentException("Remote initializer must be 16 bytes", nameof(remoteInitializer));
+
+            byte[] outboundKey = encryptKeyData(_integrationAccessCode, remoteInitializer);
+            activateOutbound(outboundKey);
+        }
+
+        public override byte[] ConfigureInboundEncryption()
+        {
+            byte[] localInitializer = RandomNumberGenerator.GetBytes(16);
+            byte[] inboundKey = encryptKeyData(_integrationAccessCode, localInitializer);
+            activateInbound(inboundKey);
+            return localInitializer;
+        }
+    }
 }
