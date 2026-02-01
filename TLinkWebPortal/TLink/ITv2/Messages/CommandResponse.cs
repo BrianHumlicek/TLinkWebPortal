@@ -18,10 +18,9 @@ using DSC.TLink.ITv2.Enumerations;
 
 namespace DSC.TLink.ITv2.Messages
 {
-	[ITv2Command(ITv2Command.Command_Response)]
+	[ITv2Command(ITv2Command.Command_Response, isAppSequence: true)]
 	internal partial record CommandResponse : IMessageData
 	{
-        public byte AppSequence { get; init; }
         public CommandResponseCode ResponseCode { get; init; }
 	}
 }

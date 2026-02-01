@@ -125,11 +125,12 @@ namespace DSC.TLink.ITv2
                             throw new InvalidOperationException("Expected OpenSession message in handshake");
 
                         case State.SendOpenSession:
-                            var replymessage = this.openSessionMessage! with { AppSequence = (byte)(this.openSessionMessage!.AppSequence + 1) };
+                            var replymessage = this.openSessionMessage!;
                             await subTransaction.BeginOutboundAsync(
                                 new ITv2Message(
                                     session.AllocateNextLocalSequence(),
                                     session._remoteSequence,
+                                    session.AllocateNextAppSequence(),
                                     replymessage),
                                 linkedCts.Token);
                             state = State.WaitForRequestAccess;
@@ -160,6 +161,7 @@ namespace DSC.TLink.ITv2
                                 new ITv2Message(
                                     session.AllocateNextLocalSequence(),
                                     session._remoteSequence,
+                                    session.AllocateNextAppSequence(),
                                     requestAccess),
                                 linkedCts.Token);
                             state = State.AwaitingComplete;

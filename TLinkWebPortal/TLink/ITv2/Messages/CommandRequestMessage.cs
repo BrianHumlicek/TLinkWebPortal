@@ -7,11 +7,10 @@ using System.Threading.Tasks;
 
 namespace DSC.TLink.ITv2.Messages
 {
-    [ITv2Command(ITv2Command.ModuleStatus_Command_Request)]
+    [ITv2Command(ITv2Command.ModuleStatus_Command_Request, isAppSequence: true)]
     [SimpleAckTransaction]
     internal record CommandRequestMessage : IMessageData
     {
-        public byte AppSequence { get; init; }
         public ITv2Command CommandRequest { get; init; }
         public byte[] Data { get; init; } = Array.Empty<byte>();
     }

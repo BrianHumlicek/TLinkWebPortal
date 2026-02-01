@@ -28,7 +28,8 @@ namespace DSC.TLink.ITv2
 		{
 			protected readonly ITv2Session session;
 			private byte localSequence, remoteSequence;
-			private Func<ITv2Message, bool> isCorrelated = new Func<ITv2Message, bool>(message => false);
+            private byte? appSequence;
+            private Func<ITv2Message, bool> isCorrelated = new Func<ITv2Message, bool>(message => false);
 
             // Timeout infrastructure
             private readonly TimeSpan _timeout;
@@ -47,7 +48,7 @@ namespace DSC.TLink.ITv2
 			{
                 // Link with timeout cancellation
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _timeoutCts.Token);
-                var message = new ITv2Message(localSequence, remoteSequence, messageData);
+                var message = new ITv2Message(localSequence, remoteSequence, appSequence, messageData);
                 return session.SendMessageAsync(message, linkedCts.Token);
 			}
 			private async Task beginInboundAsync(ITv2Message message, CancellationToken cancellationToken)
@@ -57,7 +58,12 @@ namespace DSC.TLink.ITv2
 				
 				remoteSequence = message.senderSequence;
 				localSequence = session.AllocateNextLocalSequence();
-				isCorrelated = new Func<ITv2Message, bool>(msg => msg.senderSequence == remoteSequence && isCorrelatedMessage(msg));
+                appSequence = message.appSequence;
+                if (appSequence.HasValue)
+                {
+                    session.UpdateAppSequence(appSequence.Value);
+                }
+                isCorrelated = new Func<ITv2Message, bool>(msg => msg.senderSequence == remoteSequence && isCorrelatedMessage(msg));
 				await InitializeInboundAsync(linkedCts.Token);
 			}
 
@@ -68,7 +74,8 @@ namespace DSC.TLink.ITv2
 				
 				localSequence = message.senderSequence;
 				remoteSequence = message.receiverSequence;
-				isCorrelated = new Func<ITv2Message, bool>(msg => msg.receiverSequence == localSequence && isCorrelatedMessage(msg));
+                appSequence = message.appSequence;
+                isCorrelated = new Func<ITv2Message, bool>(msg => msg.receiverSequence == localSequence && isCorrelatedMessage(msg));
 				await session.SendMessageAsync(message, linkedCts.Token);
 				await InitializeOutboundAsync(linkedCts.Token);
 			}

@@ -44,14 +44,14 @@ namespace DSC.TLink.Serialization
                     throw new InvalidOperationException("Cannot serialize null message in MultipleMessagePacket");
 
                 // Serialize the message including its command header
-                var messageBytes = MessageFactory.SerializeMessage(message);
+                var messageBytes = MessageFactory.SerializeMessage(null, message);  //The working assumption is that appsequence messages are not part of multiple message packets
 
                 // Write 2-byte length prefix
-                if (messageBytes.Length > 65535)
+                if (messageBytes.Count > 65535)
                     throw new InvalidOperationException(
-                        $"Message payload exceeds maximum length of 65535 bytes (got {messageBytes.Length})");
+                        $"Message payload exceeds maximum length of 65535 bytes (got {messageBytes.Count})");
 
-                PrimitiveSerializer.WriteUInt16(bytes, (ushort)messageBytes.Length);
+                PrimitiveSerializer.WriteUInt16(bytes, (ushort)messageBytes.Count);
 
                 // Write the message bytes
                 bytes.AddRange(messageBytes.ToArray());
@@ -82,7 +82,7 @@ namespace DSC.TLink.Serialization
                 offset += messageLength;
 
                 // Deserialize using MessageFactory (which reads the command header)
-                var message = MessageFactory.DeserializeMessage(messageBytes);
+                (_, var message) = MessageFactory.DeserializeMessage(messageBytes);
                 messages.Add(message);
             }
 

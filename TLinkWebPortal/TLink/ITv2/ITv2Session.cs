@@ -38,7 +38,7 @@ namespace DSC.TLink.ITv2
         private readonly SemaphoreSlim _transactionSemaphore = new SemaphoreSlim(1, 1);
         private readonly CancellationTokenSource _shutdownCts = new CancellationTokenSource();
         
-        private int _localSequence;
+        private int _localSequence, _appSequence;
         private byte _remoteSequence;
         private EncryptionHandler? _encryptionHandler;
         private int _disposed;
@@ -166,9 +166,9 @@ namespace DSC.TLink.ITv2
             {
                 try
                 {
-                    await Task.Delay(10000);
-                    await SendMessageAsync(new CommandRequestMessage() { CommandRequest = ITv2Command.ModuleStatus_Global_Status});
-                    _log.LogDebug("Sent global status request");
+                    //await Task.Delay(10000);
+                    //await SendMessageAsync(new CommandRequestMessage() { CommandRequest = ITv2Command.ModuleStatus_Global_Status});
+                    //_log.LogDebug("Sent global status request");
                     do
                     {
                         await Task.Delay(30000, cancellation).ConfigureAwait(false);
@@ -205,6 +205,7 @@ namespace DSC.TLink.ITv2
                 var message = new ITv2Message(
                     senderSequence: AllocateNextLocalSequence(),
                     receiverSequence: _remoteSequence,
+                    appSequence: messageData.IsAppSequence ? AllocateNextAppSequence() : null,
                     messageData: messageData);
 
                 ITransaction newTransaction = TransactionFactory.CreateTransaction(messageData, this);
@@ -309,14 +310,13 @@ namespace DSC.TLink.ITv2
             // Sequence bytes track message ordering (wrap at 255)
             byte senderSeq = messageBytes.PopByte();      // Remote's incrementing counter
             byte receiverSeq = messageBytes.PopByte();    // Expected local sequence
-
-            // Remaining bytes = command (ushort) + payload
-            // If no command, this is a SimpleAck (protocol acknowledgment)
+            (byte? appSeq, IMessageData messageData) = MessageFactory.DeserializeMessage(messageBytes);
 
             return new ITv2Message(
-                senderSequence: senderSeq,
+                senderSequence:   senderSeq,
                 receiverSequence: receiverSeq,
-                messageData: MessageFactory.DeserializeMessage(messageBytes));
+                appSequence:      appSeq,
+                messageData:      messageData);
         }
 
         async Task SendMessageAsync(ITv2Message message, CancellationToken cancellationToken)
@@ -324,14 +324,9 @@ namespace DSC.TLink.ITv2
             var messageBytes = new List<byte>(
                 [message.senderSequence,
                  message.receiverSequence,
-                 ..message.messageData.Serialize()
+                 ..message.messageData.Serialize(message.appSequence)
                 ]);
 
-            ////if (_log.IsEnabled(LogLevel.Trace))
-            //{
-            //    //_log.LogTrace("Sending message (pre encryption) {payload}", messageBytes);
-            //    _log.Log(LogLevel.Trace, $"Sending message (pre encryption) {ILoggerExtensions.Enumerable2HexString(messageBytes)}");
-            //}
             _log.LogTrace("Sending message (pre encryption) {messageBytes}", messageBytes);
             ITv2Framing.AddFraming(messageBytes);
             var encryptedBytes = _encryptionHandler?.HandleOutboundData(messageBytes.ToArray()) ?? messageBytes.ToArray();
@@ -342,6 +337,15 @@ namespace DSC.TLink.ITv2
         {
             // Thread-safe sequence allocation with automatic byte wrap
             return (byte)Interlocked.Increment(ref _localSequence);
+        }
+        void UpdateAppSequence(byte appSequence)
+        {
+            _appSequence = appSequence;
+        }
+        byte AllocateNextAppSequence()
+        {
+            // Thread-safe sequence allocation with automatic byte wrap
+            return (byte)Interlocked.Increment(ref _appSequence);
         }
 
         void SetEncryptionHandler(EncryptionType encryptionType)
@@ -385,6 +389,6 @@ namespace DSC.TLink.ITv2
             DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
 
-        internal record ITv2Message(byte senderSequence, byte receiverSequence, IMessageData messageData);
+        internal record ITv2Message(byte senderSequence, byte receiverSequence, byte? appSequence, IMessageData messageData);
     }
 }

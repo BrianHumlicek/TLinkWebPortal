@@ -1,4 +1,5 @@
-﻿using DSC.TLink.ITv2.Enumerations;
+﻿using DSC.TLink.Extensions;
+using DSC.TLink.ITv2.Enumerations;
 using DSC.TLink.Serialization;
 using System;
 using System.Collections.Immutable;
@@ -10,11 +11,13 @@ namespace DSC.TLink.ITv2.Messages
     internal static class MessageFactory
     {
         private static readonly ImmutableDictionary<ITv2Command, Type> _commandToType;
+        private static readonly ImmutableDictionary<ITv2Command, bool> _commandToAppSeq;
         private static readonly ImmutableDictionary<Type, ITv2Command> _typeToCommand;
 
         static MessageFactory()
         {
             var commandToTypeBuilder = ImmutableDictionary.CreateBuilder<ITv2Command, Type>();
+            var commandToAppSeqBuilder = ImmutableDictionary.CreateBuilder<ITv2Command, bool>();
             var typeToCommandBuilder = ImmutableDictionary.CreateBuilder<Type, ITv2Command>();
 
             var assembly = Assembly.GetExecutingAssembly();
@@ -36,29 +39,41 @@ namespace DSC.TLink.ITv2.Messages
                     }
 
                     commandToTypeBuilder[command] = type;
+                    commandToAppSeqBuilder[command] = attribute.IsAppSequence;
                     typeToCommandBuilder[type] = command;
                 }
             }
 
             _commandToType = commandToTypeBuilder.ToImmutable();
+            _commandToAppSeq = commandToAppSeqBuilder.ToImmutable();
             _typeToCommand = typeToCommandBuilder.ToImmutable();
         }
 
         /// <summary>
         /// Deserialize bytes into a strongly-typed message object.
         /// </summary>
-        public static IMessageData DeserializeMessage(ReadOnlySpan<byte> bytes)
+        public static (byte?, IMessageData) DeserializeMessage(ReadOnlySpan<byte> bytes)
         {
             if (bytes.Length == 0)
-                return new SimpleAck();
+                return (null, new SimpleAck());
             if (bytes.Length < 2)
                 throw new ArgumentException("Message too short to contain command", nameof(bytes));
 
             // First 2 bytes are the command (ushort)
-            var command = (ITv2Command)((bytes[0] << 8) | bytes[1]);
-            var payload = bytes.Slice(2);
+            var command = (ITv2Command)bytes.PopWord();
 
-            return DeserializeMessage(command, payload);
+            byte? appSeq = null;
+
+            if (IsAppSequence(command))
+            {
+                if (bytes.Length < 1)
+                    throw new ArgumentException("Message too short to contain app sequence byte", nameof(bytes));
+                appSeq = bytes.PopByte();
+            }
+
+            var message = DeserializeMessage(command, bytes);
+
+            return (appSeq, message);
         }
 
         /// <summary>
@@ -95,13 +110,13 @@ namespace DSC.TLink.ITv2.Messages
         /// <summary>
         /// Serialize a message object to bytes including the command header.
         /// </summary>
-        public static ReadOnlySpan<byte> SerializeMessage(IMessageData message)
+        public static List<byte> SerializeMessage(byte? appSequence, IMessageData message)
         {
             if (message == null) throw new ArgumentNullException(nameof(message));
 
             if (message is SimpleAck)
             {
-                return ReadOnlySpan<byte>.Empty;
+                return new List<byte>();
             }
 
             var messageType = message.GetType();
@@ -113,18 +128,25 @@ namespace DSC.TLink.ITv2.Messages
                     $"Ensure the message type is decorated with ITv2CommandAttribute.");
             }
 
+            var result = new List<byte>([
+                command.U16HighByte(),
+                command.U16LowByte()
+                ]);
+
+            if (IsAppSequence(command))
+            {
+                if (!appSequence.HasValue)
+                {
+                    throw new InvalidOperationException(
+                        $"Message type '{messageType.FullName}' requires an application sequence byte, but none was provided.");
+                }
+                result.Add(appSequence.Value);
+            }
+
             try
             {
                 // Serialize the message payload
-                var payloadBytes = BinarySerializer.Serialize(message);
-                
-                // Prepend the command (ushort, big-endian)
-                var commandValue = (ushort)command;
-                var result = new byte[2 + payloadBytes.Count];
-                result[0] = (byte)(commandValue >> 8);
-                result[1] = (byte)(commandValue & 0xFF);
-                payloadBytes.CopyTo(result.AsSpan(2));
-
+                result.AddRange(BinarySerializer.Serialize(message));
                 return result;
             }
             catch (Exception ex)
@@ -159,6 +181,17 @@ namespace DSC.TLink.ITv2.Messages
             throw new InvalidOperationException(
                 $"No command registered for message type '{messageType.FullName}'. " +
                 $"Ensure the message type is decorated with ITv2CommandAttribute.");
+        }
+
+        public static bool IsAppSequence(ITv2Command command)
+        {
+            if (_commandToAppSeq.TryGetValue(command, out var isAppSeq))
+            {
+                return isAppSeq;
+            }
+            throw new InvalidOperationException(
+                $"No command registered for '{command}'. " +
+                $"Ensure the command is declared in a message type with ITv2CommandAttribute.");
         }
 
         public static bool CanCreateMessage(ITv2Command command)

@@ -1,4 +1,6 @@
-﻿namespace DSC.TLink.ITv2.Messages
+﻿using DSC.TLink.ITv2.Enumerations;
+
+namespace DSC.TLink.ITv2.Messages
 {
     /// <summary>
     /// Base interface for all ITv2 protocol message data types.
@@ -11,9 +13,12 @@
         /// Default implementation delegates to MessageFactory.
         /// Override only if custom serialization logic is required.
         /// </summary>
-        ReadOnlySpan<byte> Serialize()
+        List<byte> Serialize(byte? appSequence)
         {
-            return MessageFactory.SerializeMessage(this);
+            return MessageFactory.SerializeMessage(appSequence, this);
         }
+
+        ITv2Command Command => MessageFactory.GetCommand(this);
+        bool IsAppSequence => MessageFactory.IsAppSequence(Command);
     }
 }

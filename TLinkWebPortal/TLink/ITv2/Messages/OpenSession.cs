@@ -20,11 +20,10 @@ using static DSC.TLink.ITv2.ITv2Session;
 
 namespace DSC.TLink.ITv2.Messages
 {
-    [ITv2Command(ITv2Command.Connection_Open_Session)]
+    [ITv2Command(ITv2Command.Connection_Open_Session, isAppSequence: true)]
     [HandshakeTransaction]
     public record OpenSession : IMessageData
     {
-        public byte AppSequence { get; init; }
         public Itv2PanelDeviceType DeviceType { get; init; }
         
         [FixedArray(2)]

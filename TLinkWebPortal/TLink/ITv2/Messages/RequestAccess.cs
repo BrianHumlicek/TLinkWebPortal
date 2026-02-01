@@ -19,10 +19,9 @@ using DSC.TLink.Serialization;
 
 namespace DSC.TLink.ITv2.Messages
 {
-    [ITv2Command(ITv2Command.Connection_Request_Access)]
+    [ITv2Command(ITv2Command.Connection_Request_Access, isAppSequence: true)]
     public partial record RequestAccess : IMessageData
     {
-        public byte AppSequence { get; init; }
 
         [LeadingLengthArray]
         public byte[] Initializer { get; init; } = Array.Empty<byte>();
