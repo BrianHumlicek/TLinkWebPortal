@@ -1,8 +1,0 @@
-{
-  "TLinkSettings": {
-    "ServerPort": 3072,
-    "IntegrationAccessCodeType1": "12345678",
-    "IntegrationAccessCodeType2": "23456789",
-    "IntegrationIdentificationNumber": "87654321"
-  }
-}

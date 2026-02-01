@@ -57,7 +57,7 @@ namespace DSC.TLink.ITv2
 				
 				remoteSequence = message.senderSequence;
 				localSequence = session.AllocateNextLocalSequence();
-				isCorrelated = new Func<ITv2Message, bool>(msg => msg.senderSequence == remoteSequence);
+				isCorrelated = new Func<ITv2Message, bool>(msg => msg.senderSequence == remoteSequence && isCorrelatedMessage(msg));
 				await InitializeInboundAsync(linkedCts.Token);
 			}
 
@@ -68,12 +68,13 @@ namespace DSC.TLink.ITv2
 				
 				localSequence = message.senderSequence;
 				remoteSequence = message.receiverSequence;
-				isCorrelated = new Func<ITv2Message, bool>(msg => msg.receiverSequence == localSequence);
+				isCorrelated = new Func<ITv2Message, bool>(msg => msg.receiverSequence == localSequence && isCorrelatedMessage(msg));
 				await session.SendMessageAsync(message, linkedCts.Token);
 				await InitializeOutboundAsync(linkedCts.Token);
 			}
 
-			protected abstract Task InitializeInboundAsync(CancellationToken cancellationToken);
+            protected virtual bool isCorrelatedMessage(ITv2Message message) => true;
+            protected abstract Task InitializeInboundAsync(CancellationToken cancellationToken);
 			protected abstract Task InitializeOutboundAsync(CancellationToken cancellationToken);
 
 			/// <summary>

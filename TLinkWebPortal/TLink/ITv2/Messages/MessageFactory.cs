@@ -68,9 +68,7 @@ namespace DSC.TLink.ITv2.Messages
         {
             if (!_commandToType.TryGetValue(command, out var messageType))
             {
-                throw new InvalidOperationException(
-                    $"No message type registered for command '{command}'. " +
-                    $"Ensure the message type is decorated with [ITv2Command({command})].");
+                messageType = typeof(DefaultMessage);                
             }
 
             try
@@ -80,6 +78,10 @@ namespace DSC.TLink.ITv2.Messages
                 {
                     throw new InvalidOperationException(
                         $"Deserialized message type '{messageType.FullName}' does not implement IMessageData.");
+                }
+                else if (message is DefaultMessage defaultMessage)
+                {
+                    defaultMessage.Command = command;
                 }
                 return typedMessage;
             }

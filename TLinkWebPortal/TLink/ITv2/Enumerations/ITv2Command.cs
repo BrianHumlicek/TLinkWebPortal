@@ -17,7 +17,7 @@ using DSC.TLink.ITv2.Messages;
 
 namespace DSC.TLink.ITv2.Enumerations
 {
-	internal enum ITv2Command// : ushort
+	internal enum ITv2Command : ushort
 	{
 		Unknown,
 		Simple_Ack = 0,

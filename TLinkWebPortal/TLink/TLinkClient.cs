@@ -68,16 +68,17 @@ namespace DSC.TLink
 		public async Task SendMessageAsync(byte[] payload, CancellationToken cancellationToken = default) => await SendMessageAsync(DefaultHeader, payload, cancellationToken);
 		public async Task SendMessageAsync(byte[] header, byte[] payload, CancellationToken cancellationToken = default)
 		{
-			log?.LogTrace(() => $"Sending header '{Array2HexString(header)}' with message '{Array2HexString(payload)}'");
-
 			var stuffedHeader = stuffBytes(header);
 			var stuffedPayload = stuffBytes(payload);
 
 			byte[] packet = stuffedHeader.Concat(0x7E).Concat(stuffedPayload).Concat(0x7F).ToArray();
 
-			log?.LogDebug("Sent     {packet}", packet);
+            if (log.IsEnabled(LogLevel.Trace))
+            {
+                log?.LogTrace("Sent     {packet}", packet);
+            }
 
-			await sendPacketAsync(packet, cancellationToken);
+            await sendPacketAsync(packet, cancellationToken);
 
 			IEnumerable<byte> stuffBytes(IEnumerable<byte> inputBytes)
 			{
@@ -126,14 +127,7 @@ namespace DSC.TLink
 			//AdvanceTo invalidates the readonly sequence that was read, so it can only be called after we are done with the sequence.
 			transport.Input.AdvanceTo(packetSequence.End);
 
-			if (log?.IsEnabled(LogLevel.Trace) ?? false)
-			{
-				log?.LogTrace("Received header '{header}'", message.header);
-				log?.LogTrace("Received payload '{payload}'", message.payload);
-			}
-
 			_defaultHeader ??= message.header;
-
 
 			return new TLinkReadResult()
 			{
@@ -160,6 +154,10 @@ namespace DSC.TLink
                     throw new TLinkPacketException(TLinkPacketException.Code.Cancelled) { PacketData = Array2HexString(readResult.Buffer.ToArray()) };
                 }
                 fullPacketHasBeenReceived = tryGetFullPacketSlice(readResult.Buffer, out packetSlice);
+                if (!fullPacketHasBeenReceived && readResult.IsCompleted)
+                {
+                    throw new TLinkPacketException(TLinkPacketException.Code.Disconnected) { PacketData = Array2HexString(readResult.Buffer.ToArray()) };
+                }
             } while (!fullPacketHasBeenReceived);
             return (packetSlice, readResult.IsCanceled, readResult.IsCompleted);
         }
@@ -170,15 +168,21 @@ namespace DSC.TLink
 			if (!delimiter.HasValue)
 			{
 				packetSlice = default;
-				return false;
+                if (log.IsEnabled(LogLevel.Trace))
+                {
+                    log.LogTrace("Partial buffer read {partialbuffer}", buffer.ToArray());
+                }
+                transport.Input.AdvanceTo(buffer.Start, buffer.End);
+
+                return false;
 			}
 
 			SequencePosition delimiterInclusivePosition = buffer.GetPosition(1, delimiter.Value);
 
 			packetSlice = buffer.Slice(0, delimiterInclusivePosition);
-			if (log.IsEnabled(LogLevel.Debug))
+			if (log.IsEnabled(LogLevel.Trace))
 			{
-				log.LogDebug("Received {rawPacket}", packetSlice);
+				log.LogTrace("Received {rawPacket}", packetSlice.ToArray());
 			}
 			return true;
 		}

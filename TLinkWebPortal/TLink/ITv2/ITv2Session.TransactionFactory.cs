@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
@@ -50,15 +51,30 @@ namespace DSC.TLink.ITv2
 
                 var messageType = messageData.GetType();
 
-                if (_transactionCreators.TryGetValue(messageType, out var creator))
+                // Check for SimpleAckTransaction attribute
+                if (messageType.IsDefined(typeof(SimpleAckTransactionAttribute), false))
                 {
-                    return creator.CreateTransaction(session);
+                    var attr = messageType.GetCustomAttribute<SimpleAckTransactionAttribute>();
+                    return new SimpleAckTransaction(session, attr?.Timeout);
                 }
 
-                // Fallback: throw or return a default transaction
-                throw new InvalidOperationException(
-                    $"No transaction creator attribute found for message type '{messageType.FullName}'. " +
-                    $"Ensure the message type is decorated with an attribute implementing ICreateTransaction.");
+                // Check for CommandResponseTransaction attribute
+                if (messageType.IsDefined(typeof(CommandResponseTransactionAttribute), false))
+                {
+                    var attr = messageType.GetCustomAttribute<CommandResponseTransactionAttribute>();
+                    return new CommandResponseTransaction(session, attr?.Timeout);
+                }
+
+                // Check for HandshakeTransaction attribute
+                if (messageType.IsDefined(typeof(HandshakeTransactionAttribute), false))
+                {
+                    return new HandshakeTransaction(session);
+                }
+
+                // Default fallback
+                session._log.LogWarning("No transaction attribute found for {MessageType}, using CommandResponseTransaction", 
+                    messageType.Name);
+                return new CommandResponseTransaction(session);
             }
         }
     }

@@ -140,6 +140,7 @@ namespace DSC.TLink.ITv2
                         case State.ReceiveRequestAccess:
                             if (message.messageData is RequestAccess requestAccessMessage)
                             {
+                                session._log.LogDebug("Setting outbound encryption");
                                 session._encryptionHandler!.ConfigureOutboundEncryption(requestAccessMessage.Initializer);
                                 await subTransaction.BeginInboundAsync(message, linkedCts.Token);
                                 state = State.SendRequestAccess;
@@ -150,6 +151,7 @@ namespace DSC.TLink.ITv2
                             throw new InvalidOperationException("Expected RequestAccess message in handshake");
                             
                         case State.SendRequestAccess:
+                            session._log.LogDebug("Setting inbound encryption");
                             var requestAccess = new RequestAccess()
                             {
                                 Initializer = session._encryptionHandler!.ConfigureInboundEncryption()
@@ -167,6 +169,7 @@ namespace DSC.TLink.ITv2
                             state = State.Complete;
                             _timeoutCts.Cancel(); // Cancel timeout on successful completion
                             session._log.LogInformation("Handshake completed successfully");
+                            session.beginHeartBeat(cancellationToken);
                             break;
                     }
                 }

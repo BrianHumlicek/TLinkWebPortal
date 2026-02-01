@@ -24,6 +24,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.IO.Pipelines;
 using System.Transactions;
+using static DSC.TLink.ITv2.ITv2Session;
 
 namespace DSC.TLink.ITv2
 {
@@ -69,7 +70,7 @@ namespace DSC.TLink.ITv2
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
             var linkedToken = linkedCts.Token;
 
-            _log.LogInformation("ITv2 session started, listening for messages");
+            _log.LogInformation("ITv2 session started, listening for messages.");
 
             try
             {
@@ -79,7 +80,7 @@ namespace DSC.TLink.ITv2
                     
                     try
                     {
-                         message = await WaitForMessageAsync(linkedToken).ConfigureAwait(false);
+                        message = await WaitForMessageAsync(linkedToken).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (linkedToken.IsCancellationRequested)
                     {
@@ -109,13 +110,23 @@ namespace DSC.TLink.ITv2
 						}
                         if (!messageHandled)
                         {
+                            _log.LogMessageDebug("Received", message.messageData);
+                            if (message.messageData is DefaultMessage defaultMessage)
+                            {
+                                _log.LogWarning("Command {command}", defaultMessage.Command);
+                                _log.LogWarning($"Data: {ILoggerExtensions.Enumerable2HexString(defaultMessage.Data)}");
+                            }
                             ITransaction newTransaction = TransactionFactory.CreateTransaction(message.messageData, this);
-							_log.LogDebug("New transaction started: {MessageType}", message.messageData.GetType().Name);
+							_log.LogDebug("New {TransactionType} started: {MessageType}", newTransaction.GetType().Name, message.messageData.GetType().Name);
 							await newTransaction.BeginInboundAsync(message, linkedToken).ConfigureAwait(false);
                             
                             if (newTransaction.CanContinue)
                             {
                                 _waitingTransactions.Add(newTransaction);
+                            }
+                            else
+                            {
+                                _log.LogDebug("Transaction completed immediately: {MessageType}", message.messageData.GetType().Name);
                             }
                         }
                         var staleTransactions = _waitingTransactions.Where(tx => !tx.CanContinue).ToList();
@@ -149,6 +160,31 @@ namespace DSC.TLink.ITv2
             }
         }
 
+        void beginHeartBeat(CancellationToken cancellation)
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(10000);
+                    await SendMessageAsync(new CommandRequestMessage() { CommandRequest = ITv2Command.ModuleStatus_Global_Status});
+                    _log.LogDebug("Sent global status request");
+                    do
+                    {
+                        await Task.Delay(30000, cancellation).ConfigureAwait(false);
+                        await SendMessageAsync(new ConnectionPoll(), cancellation).ConfigureAwait(false);
+                        _log.LogDebug("Sent Heartbeat");
+
+                    } while (!cancellation.IsCancellationRequested);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex, "Error sending heartbeat");
+                    
+                }
+            }, cancellation).ConfigureAwait(false);
+
+        }
         /// <summary>
         /// Send a message and manage its transaction lifecycle.
         /// </summary>
@@ -172,6 +208,7 @@ namespace DSC.TLink.ITv2
                     messageData: messageData);
 
                 ITransaction newTransaction = TransactionFactory.CreateTransaction(messageData, this);
+                _log.LogMessageDebug("Sending", messageData);
                 await newTransaction.BeginOutboundAsync(message, linkedToken).ConfigureAwait(false);
                 
                 if (newTransaction.CanContinue)
@@ -260,10 +297,14 @@ namespace DSC.TLink.ITv2
             // [Length:1-2][Sender:1][Receiver:1][Command?:2][Payload:0-N][CRC:2]
             var decryptedPayload = _encryptionHandler?.HandleInboundData(payload) ?? payload;
 
-            _log.LogTrace("Received ITv2 frame: Length={Length}", decryptedPayload.Length);
-
             var messageBytes = new ReadOnlySpan<byte>(decryptedPayload);
             ITv2Framing.RemoveFraming(ref messageBytes); // Removes length prefix and validates CRC
+
+            if (_log.IsEnabled(LogLevel.Trace))
+            {
+                _log.LogTrace("Received message (post decryption) {messageBytes}", messageBytes.ToArray());
+            }
+
 
             // Sequence bytes track message ordering (wrap at 255)
             byte senderSeq = messageBytes.PopByte();      // Remote's incrementing counter
@@ -286,16 +327,15 @@ namespace DSC.TLink.ITv2
                  ..message.messageData.Serialize()
                 ]);
 
+            ////if (_log.IsEnabled(LogLevel.Trace))
+            //{
+            //    //_log.LogTrace("Sending message (pre encryption) {payload}", messageBytes);
+            //    _log.Log(LogLevel.Trace, $"Sending message (pre encryption) {ILoggerExtensions.Enumerable2HexString(messageBytes)}");
+            //}
+            _log.LogTrace("Sending message (pre encryption) {messageBytes}", messageBytes);
             ITv2Framing.AddFraming(messageBytes);
-            await SendMessageBytesAsync(messageBytes.ToArray(), cancellationToken).ConfigureAwait(false);
-        }
-
-        async Task SendMessageBytesAsync(byte[] messageBytes, CancellationToken cancellationToken)
-        {
-            _log.LogTrace("Sending ITv2 frame: Length={Length}", messageBytes.Length);
-            _log.LogDebug($"Sending message (pre encryption) {ILoggerExtensions.Enumerable2HexString(messageBytes)}");
-            var encryptedBytes = _encryptionHandler?.HandleOutboundData(messageBytes) ?? messageBytes;
-            await _tlinkClient.SendMessageAsync(encryptedBytes, cancellationToken).ConfigureAwait(false);
+            var encryptedBytes = _encryptionHandler?.HandleOutboundData(messageBytes.ToArray()) ?? messageBytes.ToArray();
+            await _tlinkClient.SendMessageAsync(encryptedBytes, cancellationToken);
         }
 
         byte AllocateNextLocalSequence()
@@ -316,40 +356,6 @@ namespace DSC.TLink.ITv2
             };
 
             _log.LogInformation("Encryption handler set to {Type}", encryptionType);
-        }
-
-        private async Task CleanupStaleTransactionsAsync(CancellationToken cancellationToken)
-        {
-            // Only cleanup periodically (every 100 messages processed)
-            if (_localSequence % 100 != 0) return;
-
-            if (!await _transactionSemaphore.WaitAsync(0, cancellationToken).ConfigureAwait(false))
-                return // Skip if lock not immediately available
-                ;
-
-            try
-            {
-                var now = DateTime.UtcNow;
-                var stale = _waitingTransactions
-                    .Where(tx => !tx.CanContinue)
-                    .ToArray();
-
-                foreach (var tx in stale)
-                {
-                    _log.LogWarning("Removing stale transaction: {Type}", tx.GetType().Name);
-                    tx.Abort();
-                    _waitingTransactions.Remove(tx);
-                }
-
-                if (stale.Length > 0)
-                {
-                    _log.LogInformation("Cleaned up {Count} stale transactions", stale.Length);
-                }
-            }
-            finally
-            {
-                _transactionSemaphore.Release();
-            }
         }
 
         private void ThrowIfDisposed()
