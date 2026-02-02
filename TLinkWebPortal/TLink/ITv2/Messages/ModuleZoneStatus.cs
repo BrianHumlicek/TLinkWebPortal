@@ -1,4 +1,5 @@
-﻿using System;
+﻿using DSC.TLink.Serialization;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -10,5 +11,24 @@ namespace DSC.TLink.ITv2.Messages
     [SimpleAckTransaction]
     internal record ModuleZoneStatus : IMessageData
     {
+        [LeadingLengthArray]
+        public byte[] ZoneIndex { get; init; } = Array.Empty<byte>();
+        [LeadingLengthArray]
+        public byte[] ZoneCount { get; init; } = Array.Empty<byte>();
+        public byte StatusSizeInBytes { get; init; }    //I think this should always be 1
+        public byte[] ZoneStatusBytes { get; init; } = Array.Empty<byte>();
+
+        [Flags]
+        public enum ZoneStatusEnum : byte
+        {
+            Open = 0x01,
+            Tamper = 0x02,
+            Fault = 0x04,
+            LowBattery = 0x08,
+            Delinquency = 0x10,
+            Alarm = 0x20,
+            AlarmMemory = 0x40,
+            Bypass = 0x80
+        }
     }
 }

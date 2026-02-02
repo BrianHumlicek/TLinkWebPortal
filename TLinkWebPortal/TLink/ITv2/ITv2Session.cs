@@ -168,9 +168,11 @@ namespace DSC.TLink.ITv2
                 {
                     await Task.Delay(10000);
                     //await SendMessageAsync(new CommandRequestMessage() { CommandRequest = ITv2Command.Connection_Software_Version });
-                    await SendMessageAsync(new CommandRequestMessage() { CommandRequest = ITv2Command.ModuleStatus_Global_Status});
-                    //await SendMessageAsync(new GlobalStatusResponse());
-                    _log.LogDebug("Sent command request: SW Version");
+                    //_log.LogDebug("Sent command request: SW Version");
+                    //await SendMessageAsync(new CommandRequestMessage() { CommandRequest = ITv2Command.ModuleStatus_Global_Status });
+                    //_log.LogDebug("Sent command request: Module global status ");
+                    await SendMessageAsync(new CommandRequestMessage() { CommandRequest = ITv2Command.ModuleStatus_Zone_Status, Data =  [0x01, 0x01, 0x01, 0x07 ] });
+                    _log.LogDebug("Sent command request: Module zone status");
                     do
                     {
                         await Task.Delay(30000, cancellation).ConfigureAwait(false);
