@@ -21,8 +21,9 @@ namespace DSC.TLink.Serialization
         private static readonly ConcurrentDictionary<Type, PropertyInfo[]> _propertyCache = new();
         private static readonly List<ITypeSerializer> _typeSerializers = new()
         {
-            new MultipleMessagePacketSerializer(), // Add first - most specific handler
-            new ObjectArraySerializer(), // Handle other object arrays
+            new MultipleMessagePacketSerializer(), // Most specific handler
+            new CompactIntegerSerializer(),        // Add before ObjectArraySerializer
+            new ObjectArraySerializer(),
             new ByteArraySerializer(),
             new DateTimeSerializer(),
             new PrimitiveSerializer()

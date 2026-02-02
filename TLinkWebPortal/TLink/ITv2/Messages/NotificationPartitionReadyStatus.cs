@@ -12,13 +12,9 @@ namespace DSC.TLink.ITv2.Messages
     [SimpleAckTransaction]
     internal record NotificationPartitionReadyStatus : IMessageData
     {
-        [LeadingLengthArray]
-        public PartitionReadyStatus[] Partitions { get; init; } = Array.Empty<PartitionReadyStatus>();
-        public record PartitionReadyStatus
-        {
-            public byte PartitionNumber { get; init; }
-            public PartitionReadyStatusEnum Status { get; init; }
-        }
+        [CompactInteger]
+        public byte PartitionNumber { get; init; }
+        public PartitionReadyStatusEnum Status { get; init; }
         public enum PartitionReadyStatusEnum : byte
         {
             Reserved = 0,

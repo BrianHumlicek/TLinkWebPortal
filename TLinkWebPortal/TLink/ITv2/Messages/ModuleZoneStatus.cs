@@ -11,10 +11,10 @@ namespace DSC.TLink.ITv2.Messages
     [SimpleAckTransaction]
     internal record ModuleZoneStatus : IMessageData
     {
-        [LeadingLengthArray]
-        public byte[] ZoneIndex { get; init; } = Array.Empty<byte>();
-        [LeadingLengthArray]
-        public byte[] ZoneCount { get; init; } = Array.Empty<byte>();
+        [CompactInteger]
+        public int ZoneStart { get; init; }
+        [CompactInteger]
+        public int ZoneCount { get; init; }
         public byte StatusSizeInBytes { get; init; }    //I think this should always be 1
         public byte[] ZoneStatusBytes { get; init; } = Array.Empty<byte>();
 

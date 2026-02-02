@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using DSC.TLink.Extensions;
 using DSC.TLink.ITv2.Messages;
 using Microsoft.Extensions.Logging;
 
@@ -82,9 +83,6 @@ namespace DSC.TLink.ITv2
                             _state = State.Complete;
                             session._log.LogDebug("SimpleAck transaction completed (outbound)");
                             break;
-                            session._log.LogWarning("Expected SimpleAck, got {Type}", message.messageData.GetType().Name);
-							Abort();
-							return;
 						}
                         else if (message.messageData is CommandError errorMessage)
                         {
@@ -94,6 +92,7 @@ namespace DSC.TLink.ITv2
                             break;
                         }
                         session._log.LogError("Expected Ack, got {Type}", message.messageData.GetType().Name);
+                        session._log.LogMessageDebug("Received", message.messageData);
                         Abort();
                         break;
                     default:

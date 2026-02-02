@@ -8,13 +8,9 @@ namespace DSC.TLink.ITv2.Messages
 
     internal record NotificationLifestyleZoneStatus : IMessageData
     {
-        [LeadingLengthArray]
-        public LifestyleZoneStatus[] Zones { get; init; } = Array.Empty<LifestyleZoneStatus>();
-        public record LifestyleZoneStatus
-        {
-            public byte ZoneNumber { get; init; }
-            public LifeStyleZoneStatusCode Status { get; init; }
-        }
+        [CompactInteger]
+        public byte ZoneNumber { get; init; }
+        public LifeStyleZoneStatusCode Status { get; init; }
         public enum LifeStyleZoneStatusCode : byte
         {
             Unknown = 0xFF,

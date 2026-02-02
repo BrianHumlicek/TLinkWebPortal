@@ -6,7 +6,8 @@ using System.Threading.Tasks;
 
 namespace DSC.TLink.ITv2
 {
-    internal interface ITv2Session
+    internal partial class ITv2Session
     {
+        //stub
     }
 }

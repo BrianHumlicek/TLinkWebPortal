@@ -186,5 +186,122 @@ namespace DSC.TLink.Serialization
         }
 
         #endregion
+
+        #region Byte Array Helpers (for CompactInteger and other specialized serializers)
+
+        /// <summary>
+        /// Convert integer value to big-endian byte array.
+        /// </summary>
+        internal static byte[] GetBytes(object value, Type type)
+        {
+            return Type.GetTypeCode(type) switch
+            {
+                TypeCode.Byte => new[] { (byte)value },
+                TypeCode.SByte => new[] { (byte)(sbyte)value },
+                TypeCode.UInt16 => GetBytesUInt16((ushort)value),
+                TypeCode.Int16 => GetBytesInt16((short)value),
+                TypeCode.UInt32 => GetBytesUInt32((uint)value),
+                TypeCode.Int32 => GetBytesInt32((int)value),
+                TypeCode.UInt64 => GetBytesUInt64((ulong)value),
+                TypeCode.Int64 => GetBytesInt64((long)value),
+                _ => throw new NotSupportedException($"Type {type} not supported for integer serialization")
+            };
+        }
+
+        internal static byte[] GetBytesUInt16(ushort value) =>
+            new[] { (byte)(value >> 8), (byte)(value & 0xFF) };
+
+        internal static byte[] GetBytesInt16(short value) =>
+            new[] { (byte)(value >> 8), (byte)(value & 0xFF) };
+
+        internal static byte[] GetBytesUInt32(uint value) =>
+            new[] { (byte)(value >> 24), (byte)(value >> 16), (byte)(value >> 8), (byte)(value & 0xFF) };
+
+        internal static byte[] GetBytesInt32(int value) =>
+            new[] { (byte)(value >> 24), (byte)(value >> 16), (byte)(value >> 8), (byte)(value & 0xFF) };
+
+        internal static byte[] GetBytesUInt64(ulong value) => new[]
+        {
+            (byte)(value >> 56), (byte)(value >> 48), (byte)(value >> 40), (byte)(value >> 32),
+            (byte)(value >> 24), (byte)(value >> 16), (byte)(value >> 8), (byte)(value & 0xFF)
+        };
+
+        internal static byte[] GetBytesInt64(long value) => new[]
+        {
+            (byte)(value >> 56), (byte)(value >> 48), (byte)(value >> 40), (byte)(value >> 32),
+            (byte)(value >> 24), (byte)(value >> 16), (byte)(value >> 8), (byte)(value & 0xFF)
+        };
+
+        /// <summary>
+        /// Read integer from byte span with optional sign extension.
+        /// </summary>
+        internal static object ReadFromBytes(ReadOnlySpan<byte> bytes, Type type, bool signExtend = false)
+        {
+            bool isNegative = signExtend && bytes.Length > 0 && (bytes[0] & 0x80) != 0;
+
+            return Type.GetTypeCode(type) switch
+            {
+                TypeCode.Byte => bytes.Length == 0 ? (byte)0 : bytes[0],
+                TypeCode.SByte => bytes.Length == 0 ? (sbyte)0 : (sbyte)bytes[0],
+                TypeCode.UInt16 => ReadCompactUInt16(bytes),
+                TypeCode.Int16 => ReadCompactInt16(bytes, isNegative),
+                TypeCode.UInt32 => ReadCompactUInt32(bytes),
+                TypeCode.Int32 => ReadCompactInt32(bytes, isNegative),
+                TypeCode.UInt64 => ReadCompactUInt64(bytes),
+                TypeCode.Int64 => ReadCompactInt64(bytes, isNegative),
+                _ => throw new NotSupportedException($"Type {type} not supported")
+            };
+        }
+
+        // Compact read helpers (handle variable-length integers with sign extension)
+        private static ushort ReadCompactUInt16(ReadOnlySpan<byte> bytes)
+        {
+            ushort result = 0;
+            for (int i = 0; i < bytes.Length && i < 2; i++)
+                result = (ushort)((result << 8) | bytes[i]);
+            return result;
+        }
+
+        private static short ReadCompactInt16(ReadOnlySpan<byte> bytes, bool isNegative)
+        {
+            short result = isNegative ? (short)-1 : (short)0;
+            for (int i = 0; i < bytes.Length && i < 2; i++)
+                result = (short)((result << 8) | bytes[i]);
+            return result;
+        }
+
+        private static uint ReadCompactUInt32(ReadOnlySpan<byte> bytes)
+        {
+            uint result = 0;
+            for (int i = 0; i < bytes.Length && i < 4; i++)
+                result = (result << 8) | bytes[i];
+            return result;
+        }
+
+        private static int ReadCompactInt32(ReadOnlySpan<byte> bytes, bool isNegative)
+        {
+            int result = isNegative ? -1 : 0;
+            for (int i = 0; i < bytes.Length && i < 4; i++)
+                result = (result << 8) | bytes[i];
+            return result;
+        }
+
+        private static ulong ReadCompactUInt64(ReadOnlySpan<byte> bytes)
+        {
+            ulong result = 0;
+            for (int i = 0; i < bytes.Length && i < 8; i++)
+                result = (result << 8) | bytes[i];
+            return result;
+        }
+
+        private static long ReadCompactInt64(ReadOnlySpan<byte> bytes, bool isNegative)
+        {
+            long result = isNegative ? -1L : 0L;
+            for (int i = 0; i < bytes.Length && i < 8; i++)
+                result = (result << 8) | bytes[i];
+            return result;
+        }
+
+        #endregion
     }
 }
