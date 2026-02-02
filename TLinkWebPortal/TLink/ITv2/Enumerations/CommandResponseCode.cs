@@ -7,47 +7,68 @@
 // (at your option) any later version.
 //
 // This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY, without even the implied warranty of
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.ComponentModel;
+
 namespace DSC.TLink.ITv2.Enumerations
 {
 	internal enum CommandResponseCode : byte
 	{
+		[Description("Success")]
 		Success = 0,
-		CanNotExitConfiguration = 1,
-		IgnoreFirmware = 1,
-		InvalidSectionRange = 1,
-		CommandOutputNotDefined = 1,
-		InvalidTestModeSpecified = 1,
+
+		[Description("Cannot Exit Configuration/Ignore Firmware (No Firmware Available)/ Block out of range/ Command Output is not defined/System cannot be put in the specified test mode/ Unsupported Buffer ID/ Enabled Late To Open/ Invalid Type")]
+		CannotExitConfiguration = 1,
+
+		[Description("Invalid programming Type/ Packet Length cannot be supported/ Ignore Firmware (No Firmware Available)/ Invalid Output Number/ Invalid Unsupported Test Type")]
 		InvalidProgrammingType = 2,
-		InvalidIndex = 2,
-		InvalidData = 2,
-		InvalidOutputNumber = 2,
+
+		[Description("Unsupported module/No new information in the specified buffer")]
 		UnsupportedModule = 3,
-		NoNewInformationInTheSpecifiedBuffer = 3,
-		IncorrectProgrammingMode = 16,
-		InvalidAccessCode = 17,
-		AccessCodeRequired = 18,
-		SystemPartitionBusy = 19,
-		InvalidPartition = 20,
-		FunctionNotAvailable = 23,
-		InternalError = 24,
-		EnabledLateToOpen = 1,
-		InvalidType = 1,
-		InvalidUnsupportedTestType = 2,
-		DisabledLateToOpen = 2,
-		WalkTestActive = 3,
+
+		[Description("Invalid Signal Type/ Some Or All Partition Failed To Arm")]
 		InvalidSignalType = 4,
-		SomeOrAllPartitionFailedToArm = 4,
+
+		[Description("Not in correct Programming Mode/ WalkTestActive")]
+		NotInCorrectProgrammingMode = 16,
+
+		[Description("Invalid Access Code")]
+		InvalidAccessCode = 17,
+
+		[Description("Access Code is Required")]
+		AccessCodeRequired = 18,
+
+		[Description("System/Partition is Busy")]
+		SystemPartitionBusy = 19,
+
+		[Description("Invalid Partition")]
+		InvalidPartition = 20,
+
+		[Description("Function Not Available")]
+		FunctionNotAvailable = 23,
+
+		[Description("Internal Error (For example, memory access failure)")]
+		InternalError = 24,
+
+		[Description("Command TimeOut")]
+		CommandTimeOut = 25,
+
+		[Description("No Troubles Present For Requested Type")]
 		NoTroublesPresentForRequestedType = 26,
+
+		[Description("No Requested Alarms Found")]
 		NoRequestedAlarmsFound = 27,
+
+		[Description("Invalid Device Module")]
 		InvalidDeviceModule = 28,
-		InvalidTroubleType = 29,
-		CommandTimeOut = 25
+
+		[Description("Invalid Trouble Type")]
+		InvalidTroubleType = 29
 	}
 }

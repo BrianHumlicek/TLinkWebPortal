@@ -57,7 +57,7 @@ namespace DSC.TLink.ITv2
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _timeoutCts.Token);
 				
 				remoteSequence = message.senderSequence;
-				localSequence = session.AllocateNextLocalSequence();
+                localSequence = (byte)session._localSequence; //message.receiverSequence;// session.AllocateNextLocalSequence();
                 appSequence = message.appSequence;
                 if (appSequence.HasValue)
                 {

@@ -38,7 +38,7 @@ namespace DSC.TLink.ITv2
         private readonly SemaphoreSlim _transactionSemaphore = new SemaphoreSlim(1, 1);
         private readonly CancellationTokenSource _shutdownCts = new CancellationTokenSource();
         
-        private int _localSequence, _appSequence;
+        private int _localSequence = 1, _appSequence;
         private byte _remoteSequence;
         private EncryptionHandler? _encryptionHandler;
         private int _disposed;
@@ -65,7 +65,7 @@ namespace DSC.TLink.ITv2
             ThrowIfDisposed();
             
             _tlinkClient.InitializeTransport(transport);
-            
+
             // Combine external token with internal shutdown token
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
             var linkedToken = linkedCts.Token;
@@ -166,9 +166,11 @@ namespace DSC.TLink.ITv2
             {
                 try
                 {
-                    //await Task.Delay(10000);
-                    //await SendMessageAsync(new CommandRequestMessage() { CommandRequest = ITv2Command.ModuleStatus_Global_Status});
-                    //_log.LogDebug("Sent global status request");
+                    await Task.Delay(10000);
+                    //await SendMessageAsync(new CommandRequestMessage() { CommandRequest = ITv2Command.Connection_Software_Version });
+                    await SendMessageAsync(new CommandRequestMessage() { CommandRequest = ITv2Command.ModuleStatus_Global_Status});
+                    //await SendMessageAsync(new GlobalStatusResponse());
+                    _log.LogDebug("Sent command request: SW Version");
                     do
                     {
                         await Task.Delay(30000, cancellation).ConfigureAwait(false);

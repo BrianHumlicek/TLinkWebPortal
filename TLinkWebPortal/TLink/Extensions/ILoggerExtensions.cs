@@ -196,6 +196,10 @@ namespace DSC.TLink.Extensions
 		}
 
 		public static byte[] HexString2Array(string hexString) => hexString.Split('-').Select(s => byte.Parse(s, NumberStyles.HexNumber)).ToArray();
-		public static string Enumerable2HexString(IEnumerable<byte> bytes) => String.Join('-', bytes.Select(b => $"{b:X2}"));
+        public static string Enumerable2HexString(IEnumerable<byte> bytes)
+        {
+            var hexValues = String.Join('-', bytes.Select(b => $"{b:X2}"));
+            return $"[{hexValues}]";            
+        }
 	}
 }

@@ -189,9 +189,7 @@ namespace DSC.TLink.ITv2.Messages
             {
                 return isAppSeq;
             }
-            throw new InvalidOperationException(
-                $"No command registered for '{command}'. " +
-                $"Ensure the command is declared in a message type with ITv2CommandAttribute.");
+            return false;
         }
 
         public static bool CanCreateMessage(ITv2Command command)

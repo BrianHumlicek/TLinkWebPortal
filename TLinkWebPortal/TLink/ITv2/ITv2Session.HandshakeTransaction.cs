@@ -116,6 +116,7 @@ namespace DSC.TLink.ITv2
                             {
                                 this.openSessionMessage = openSessionMessage;
                                 session.SetEncryptionHandler(openSessionMessage.EncryptionType);
+                                message = message with { receiverSequence = (byte)session._localSequence };
                                 await subTransaction.BeginInboundAsync(message, linkedCts.Token);
                                 state = State.SendOpenSession;
                                 break;
