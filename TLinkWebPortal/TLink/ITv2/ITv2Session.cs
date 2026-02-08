@@ -18,91 +18,174 @@ using DSC.TLink.Extensions;
 using DSC.TLink.ITv2.Encryption;
 using DSC.TLink.ITv2.Enumerations;
 using DSC.TLink.ITv2.Messages;
+using DSC.TLink.ITv2.Transactions;
 using MediatR;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.IO.Pipelines;
+using System.Net.Sockets;
+using System.Text;
 using System.Transactions;
 using static DSC.TLink.ITv2.ITv2Session;
 
 namespace DSC.TLink.ITv2
 {
-    internal partial class ITv2Session : IAsyncDisposable
+    internal class ITv2Session : IDisposable
     {
         private readonly ILogger _log;
         private readonly TLinkClient _tlinkClient;
-        private readonly IMediator _mediator;
         private readonly ITv2Settings _itv2Settings;
-        private readonly List<ITransaction> _waitingTransactions = new();
+        private readonly List<ITransaction> _pendingTransactions = new();
         private readonly SemaphoreSlim _transactionSemaphore = new SemaphoreSlim(1, 1);
+        private readonly TaskCompletionSource flushQueueTCS = new TaskCompletionSource();
         private readonly CancellationTokenSource _shutdownCts = new CancellationTokenSource();
-        
-        private int _localSequence = 1, _appSequence;
+
+        private string? _sessionID;
+        private byte _localSequence = 1, _appSequence;
         private byte _remoteSequence;
         private EncryptionHandler? _encryptionHandler;
-        private int _disposed;
+        private sessionState _sessionState;
 
         public ITv2Session(
-            TLinkClient tlinkClient, 
-            IMediator mediator, 
+            TLinkClient tlinkClient,
             IOptions<ITv2Settings> settingsOptions, 
             ILogger<ITv2Session> logger)
         {
             _tlinkClient = tlinkClient ?? throw new ArgumentNullException(nameof(tlinkClient));
-            _mediator = mediator ?? throw new ArgumentNullException(nameof(mediator));
             _itv2Settings = settingsOptions.Value ?? throw new ArgumentNullException(nameof(settingsOptions));
             _log = logger ?? throw new ArgumentNullException(nameof(logger));
+            _sessionState = sessionState.Uninitialized;
+        }
+
+        public string SessionID => _sessionID ?? throw new InvalidOperationException($"Session must be initialized to get property {nameof(SessionID)}");
+
+        public async Task InitializeSession(IDuplexPipe transport, CancellationToken cancellationToken = default)
+        {
+            if (_sessionState != sessionState.Uninitialized)
+                throw new InvalidOperationException("Session must be uninitialized.");
+            try
+            {
+                _tlinkClient.InitializeTransport(transport);
+
+                // Combine external token with internal shutdown token
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
+                var linkedToken = linkedCts.Token;
+
+                var clientResult = await WaitForClientResultAsync(linkedToken);
+
+                ITv2MessagePacket packet = ParseITv2Message(clientResult.Payload);
+
+                await HandshakeAsync(packet, linkedToken);
+
+                //This ID is [851][422] Integration Identification Number and is part of every message.  I just take it from the first message.
+                _sessionID = Encoding.UTF8.GetString(clientResult.Header);
+            }
+            catch
+            {
+                _sessionState = sessionState.Closed;                
+                throw;
+            }
+            _sessionState = sessionState.Connected;
+        }
+
+        private async Task HandshakeAsync(ITv2MessagePacket messagePacket, CancellationToken cancellation)
+        {
+            OpenSession openSessionMessage = messagePacket.messageData.As<OpenSession>();
+
+            await executeInboundTransactionAsync(messagePacket);
+
+            await executeOutboundTransactionAsync(openSessionMessage);
+
+            SetEncryptionHandler(openSessionMessage.EncryptionType);
+
+            messagePacket = await WaitForMessageAsync(cancellation);
+
+            RequestAccess requestAccess = messagePacket.messageData.As<RequestAccess>();
+
+            _encryptionHandler!.ConfigureOutboundEncryption(requestAccess.Initializer);
+            
+            await executeInboundTransactionAsync(messagePacket);
+
+            requestAccess = new RequestAccess() { Initializer = _encryptionHandler.ConfigureInboundEncryption() };
+
+            await executeOutboundTransactionAsync(requestAccess);
+            
+            return;
+            
+            /*Local methods*****************************************************/
+            async Task executeInboundTransactionAsync(ITv2MessagePacket inboundMessagePacket)
+            {
+                EnsureInboundReceiverSequence(ref inboundMessagePacket);
+                var transaction = CreateTransaction(inboundMessagePacket.messageData);
+                await transaction.BeginInboundAsync(inboundMessagePacket, cancellation);
+                await completeTransactionAsync(transaction);
+            }
+            async Task executeOutboundTransactionAsync(IMessageData messageData)
+            {
+                var messagePacket = CreateNextOutboundMessagePacket(messageData);
+                var transaction = CreateTransaction(messageData);
+                await transaction.BeginOutboundAsync(messagePacket, cancellation);
+                await completeTransactionAsync(transaction);
+            }
+            async Task completeTransactionAsync(ITransaction transaction)
+            {
+                ITv2MessagePacket messagePacket;
+                while (transaction.CanContinue)
+                {
+                    messagePacket = await WaitForMessageAsync(cancellation);
+                    if (!await transaction.TryContinueAsync(messagePacket, cancellation))
+                    {
+                        throw new Exception("Unable to continue handshake");
+                    }
+                }
+            }
         }
 
         /// <summary>
         /// Listen for incoming messages and process them through transactions.
         /// </summary>
-        /// <param name="transport">The duplex pipe for communication</param>
         /// <param name="cancellationToken">External cancellation token</param>
-        public async Task ListenAsync(IDuplexPipe transport, CancellationToken cancellationToken = default)
+        public async Task ListenAsync(CancellationToken cancellationToken = default)
         {
-            ThrowIfDisposed();
-            
-            _tlinkClient.InitializeTransport(transport);
+            if (_sessionState != sessionState.Connected)
+                throw new InvalidOperationException("Session is not connected/initialized");
 
             // Combine external token with internal shutdown token
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
             var linkedToken = linkedCts.Token;
 
+            Timer? flushQueueTimer = new Timer(_ => 
+            {
+                _log.LogInformation("Receive queue is flushed.  Ready to start sending");
+                flushQueueTCS.SetResult();
+                flushQueueTimer = null;
+                beginHeartBeat(linkedToken);
+            });
             _log.LogInformation("ITv2 session started, listening for messages.");
 
             try
             {
                 while (!linkedToken.IsCancellationRequested)
                 {
-                    ITv2Message message;
-                    
-                    try
-                    {
-                        message = await WaitForMessageAsync(linkedToken).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException) when (linkedToken.IsCancellationRequested)
-                    {
-                        _log.LogInformation("Listen operation cancelled");
-                        break;
-                    }
+                    flushQueueTimer?.Change(2000, Timeout.Infinite);
+                    var messagePacket = await WaitForMessageAsync(linkedToken);
+                    flushQueueTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+
+                    _remoteSequence = messagePacket.senderSequence;
 
                     // Acquire lock with timeout to prevent deadlock
-                    if (!await _transactionSemaphore.WaitAsync(TimeSpan.FromSeconds(30), linkedToken).ConfigureAwait(false))
+                    if (!await _transactionSemaphore.WaitAsync(TimeSpan.FromSeconds(30), linkedToken))
                     {
                         _log.LogError("Transaction semaphore timeout - possible deadlock");
                         throw new TimeoutException("Failed to acquire transaction lock within 30 seconds");
                     }
-
-                    _remoteSequence = message.senderSequence;
-                    
-                    try
+                    try   //Try-Finally for _transactionSemaphore
                     {
 						bool messageHandled = false;
-						foreach (var waitingTransaction in _waitingTransactions)
+						foreach (var waitingTransaction in _pendingTransactions)
 						{
-							if (await waitingTransaction.TryContinueAsync(message, linkedToken))
+							if (await waitingTransaction.TryContinueAsync(messagePacket, linkedToken))
 							{
 								messageHandled = true;
                                 break;
@@ -110,39 +193,40 @@ namespace DSC.TLink.ITv2
 						}
                         if (!messageHandled)
                         {
-                            _log.LogMessageDebug("Received", message.messageData);
-                            if (message.messageData is DefaultMessage defaultMessage)
+                            _log.LogMessageDebug("Received", messagePacket.messageData);
+                            if (messagePacket.messageData is DefaultMessage defaultMessage)
                             {
                                 _log.LogWarning("Command {command}", defaultMessage.Command);
                                 _log.LogWarning($"Data: {ILoggerExtensions.Enumerable2HexString(defaultMessage.Data)}");
                             }
-                            ITransaction newTransaction = TransactionFactory.CreateTransaction(message.messageData, this);
-							_log.LogDebug("New {TransactionType} started: {MessageType}", newTransaction.GetType().Name, message.messageData.GetType().Name);
-							await newTransaction.BeginInboundAsync(message, linkedToken).ConfigureAwait(false);
+
+                            EnsureInboundReceiverSequence(ref messagePacket);
+
+                            ITransaction newTransaction = CreateTransaction(messagePacket.messageData);
+
+							_log.LogDebug("New {TransactionType} started: {MessageType}", newTransaction.GetType().Name, messagePacket.messageData.GetType().Name);
+							await newTransaction.BeginInboundAsync(messagePacket, linkedToken);
                             
                             if (newTransaction.CanContinue)
                             {
-                                _waitingTransactions.Add(newTransaction);
+                                _pendingTransactions.Add(newTransaction);
                             }
                             else
                             {
-                                _log.LogDebug("Transaction completed immediately: {MessageType}", message.messageData.GetType().Name);
+                                _log.LogDebug("Transaction completed immediately: {MessageType}", messagePacket.messageData.GetType().Name);
                             }
                         }
-                        var staleTransactions = _waitingTransactions.Where(tx => !tx.CanContinue).ToList();
+                        var staleTransactions = _pendingTransactions.Where(tx => !tx.CanContinue).ToList();
                         foreach (var stale in staleTransactions)
                         {
                             _log.LogDebug("Removing completed transaction: {Type}", stale.GetType().Name);
-                            _waitingTransactions.Remove(stale);
+                            _pendingTransactions.Remove(stale);
                         }
                     }
                     finally
                     {
                         _transactionSemaphore.Release();
                     }
-
-                    // Periodic cleanup of stale transactions
-                    //await CleanupStaleTransactionsAsync(linkedToken).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException) when (linkedToken.IsCancellationRequested)
@@ -156,6 +240,7 @@ namespace DSC.TLink.ITv2
             }
             finally
             {
+                _sessionState = sessionState.Closed;
                 _log.LogInformation("ITv2 session listen loop exited");
             }
         }
@@ -166,17 +251,18 @@ namespace DSC.TLink.ITv2
             {
                 try
                 {
-                    await Task.Delay(10000);
-                    //await SendMessageAsync(new CommandRequestMessage() { CommandRequest = ITv2Command.Connection_Software_Version });
-                    //_log.LogDebug("Sent command request: SW Version");
-                    //await SendMessageAsync(new CommandRequestMessage() { CommandRequest = ITv2Command.ModuleStatus_Global_Status });
-                    //_log.LogDebug("Sent command request: Module global status ");
-                    await SendMessageAsync(new CommandRequestMessage() { CommandRequest = ITv2Command.ModuleStatus_Zone_Status, Data =  [0x01, 0x01, 0x01, 0x07 ] });
-                    _log.LogDebug("Sent command request: Module zone status");
+                    //await Task.Delay(10000);
+                    ////await SendMessageAsync(new CommandRequestMessage() { CommandRequest = ITv2Command.Connection_Software_Version });
+                    ////_log.LogDebug("Sent command request: SW Version");
+                    ////await SendMessageAsync(new CommandRequestMessage() { CommandRequest = ITv2Command.ModuleStatus_Global_Status });
+                    ////_log.LogDebug("Sent command request: Module global status ");
+                    //await SendMessageAsync(new CommandRequestMessage() { CommandRequest = ITv2Command.ModuleStatus_Zone_Status, Data =  [0x01, 0x01, 0x01, 0x07 ] });
+                    //_log.LogDebug("Sent command request: Module zone status");
                     do
                     {
-                        await Task.Delay(30000, cancellation).ConfigureAwait(false);
-                        await SendMessageAsync(new ConnectionPoll(), cancellation).ConfigureAwait(false);
+                        //I have found that the connection times out at 2 minutes.
+                        await Task.Delay(TimeSpan.FromSeconds(100), cancellation);
+                        await SendMessageAsync(new ConnectionPoll(), cancellation);
                         _log.LogDebug("Sent Heartbeat");
 
                     } while (!cancellation.IsCancellationRequested);
@@ -186,7 +272,7 @@ namespace DSC.TLink.ITv2
                     _log.LogError(ex, "Error sending heartbeat");
                     
                 }
-            }, cancellation).ConfigureAwait(false);
+            }, cancellation);
 
         }
         /// <summary>
@@ -194,10 +280,9 @@ namespace DSC.TLink.ITv2
         /// </summary>
         public async Task SendMessageAsync(IMessageData messageData, CancellationToken cancellationToken = default)
         {
-            ThrowIfDisposed();
-            
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
             var linkedToken = linkedCts.Token;
+            await flushQueueTCS.Task;
 
             if (!await _transactionSemaphore.WaitAsync(TimeSpan.FromSeconds(30), linkedToken).ConfigureAwait(false))
             {
@@ -206,19 +291,16 @@ namespace DSC.TLink.ITv2
 
             try
             {
-                var message = new ITv2Message(
-                    senderSequence: AllocateNextLocalSequence(),
-                    receiverSequence: _remoteSequence,
-                    appSequence: messageData.IsAppSequence ? AllocateNextAppSequence() : null,
-                    messageData: messageData);
+                var message = CreateNextOutboundMessagePacket(messageData);
 
-                ITransaction newTransaction = TransactionFactory.CreateTransaction(messageData, this);
+                ITransaction newTransaction = CreateTransaction(messageData);
+
                 _log.LogMessageDebug("Sending", messageData);
                 await newTransaction.BeginOutboundAsync(message, linkedToken).ConfigureAwait(false);
                 
                 if (newTransaction.CanContinue)
                 {
-                    _waitingTransactions.Add(newTransaction);
+                    _pendingTransactions.Add(newTransaction);
                     _log.LogDebug("Outbound transaction started: {MessageType}", messageData.GetType().Name);
                 }
             }
@@ -249,8 +331,8 @@ namespace DSC.TLink.ITv2
             {
                 try
                 {
-                    var transactionCount = _waitingTransactions.Count;
-                    foreach (var transaction in _waitingTransactions.ToArray())
+                    var transactionCount = _pendingTransactions.Count;
+                    foreach (var transaction in _pendingTransactions.ToArray())
                     {
                         try
                         {
@@ -261,7 +343,7 @@ namespace DSC.TLink.ITv2
                             _log.LogWarning(ex, "Error aborting transaction during shutdown");
                         }
                     }
-                    _waitingTransactions.Clear();
+                    _pendingTransactions.Clear();
                     _log.LogInformation("Aborted {Count} pending transactions", transactionCount);
                 }
                 finally
@@ -277,15 +359,15 @@ namespace DSC.TLink.ITv2
             _log.LogInformation("ITv2 session shutdown complete");
         }
 
-        async Task<ITv2Message> WaitForMessageAsync(CancellationToken cancellationToken)
+        async Task<ITv2MessagePacket> WaitForMessageAsync(CancellationToken cancellationToken)
         {
-            var payload = await WaitForClientPayloadAsync(cancellationToken).ConfigureAwait(false);
-            return ParseITv2Message(payload);
+            var clientResult = await WaitForClientResultAsync(cancellationToken);
+            return ParseITv2Message(clientResult.Payload);
         }
 
-        async Task<byte[]> WaitForClientPayloadAsync(CancellationToken cancellationToken)
+        async Task<TLinkClient.TLinkReadResult> WaitForClientResultAsync(CancellationToken cancellationToken)
         {
-            var clientResult = await _tlinkClient.ReadMessageAsync(cancellationToken).ConfigureAwait(false);
+            var clientResult = await _tlinkClient.ReadMessageAsync(cancellationToken);
 
             if (clientResult.IsComplete)
             {
@@ -293,10 +375,10 @@ namespace DSC.TLink.ITv2
                 throw new TLinkPacketException(TLinkPacketException.Code.Disconnected);
             }
 
-            return clientResult.Payload;
+            return clientResult;
         }
 
-        ITv2Message ParseITv2Message(byte[] payload)
+        ITv2MessagePacket ParseITv2Message(byte[] payload)
         {
             // ITv2 Frame Structure:
             // [Length:1-2][Sender:1][Receiver:1][Command?:2][Payload:0-N][CRC:2]
@@ -316,14 +398,14 @@ namespace DSC.TLink.ITv2
             byte receiverSeq = messageBytes.PopByte();    // Expected local sequence
             (byte? appSeq, IMessageData messageData) = MessageFactory.DeserializeMessage(messageBytes);
 
-            return new ITv2Message(
+            return new ITv2MessagePacket(
                 senderSequence:   senderSeq,
                 receiverSequence: receiverSeq,
                 appSequence:      appSeq,
                 messageData:      messageData);
         }
-
-        async Task SendMessageAsync(ITv2Message message, CancellationToken cancellationToken)
+        ITransaction CreateTransaction(IMessageData messageData) => TransactionFactory.CreateTransaction(messageData, _log, SendTransactionMessageAsync);
+        async Task SendTransactionMessageAsync(ITv2MessagePacket message, CancellationToken cancellationToken)
         {
             var messageBytes = new List<byte>(
                 [message.senderSequence,
@@ -336,26 +418,32 @@ namespace DSC.TLink.ITv2
             var encryptedBytes = _encryptionHandler?.HandleOutboundData(messageBytes.ToArray()) ?? messageBytes.ToArray();
             await _tlinkClient.SendMessageAsync(encryptedBytes, cancellationToken);
         }
-
-        byte AllocateNextLocalSequence()
+        void EnsureInboundReceiverSequence(ref ITv2MessagePacket inboundMessagePacket)
         {
-            // Thread-safe sequence allocation with automatic byte wrap
-            return (byte)Interlocked.Increment(ref _localSequence);
+            if (inboundMessagePacket.appSequence.HasValue)
+            {
+                _appSequence = inboundMessagePacket.appSequence.Value;
+            }
+            if (inboundMessagePacket.receiverSequence != _localSequence)
+            {
+                inboundMessagePacket = inboundMessagePacket with { receiverSequence = (byte)_localSequence };
+            }
         }
-        void UpdateAppSequence(byte appSequence)
+        ITv2MessagePacket CreateNextOutboundMessagePacket(IMessageData messageData)
         {
-            _appSequence = appSequence;
+            return new ITv2MessagePacket(
+                senderSequence: GetNextLocalSequence(),
+                receiverSequence: _remoteSequence,
+                appSequence: messageData.IsAppSequence ? GetNextAppSequence() : null,
+                messageData: messageData);
         }
-        byte AllocateNextAppSequence()
-        {
-            // Thread-safe sequence allocation with automatic byte wrap
-            return (byte)Interlocked.Increment(ref _appSequence);
-        }
-
+        byte GetNextLocalSequence() => ++_localSequence;
+        byte GetNextAppSequence() => ++_appSequence;
         void SetEncryptionHandler(EncryptionType encryptionType)
         {
-            _encryptionHandler?.Dispose();
-            
+            if (_encryptionHandler is not null)
+                throw new InvalidOperationException("Encryption handler has already been set.");
+
             _encryptionHandler = encryptionType switch
             {
                 EncryptionType.Type1 => new Type1EncryptionHandler(_itv2Settings),
@@ -365,34 +453,17 @@ namespace DSC.TLink.ITv2
 
             _log.LogInformation("Encryption handler set to {Type}", encryptionType);
         }
-
-        private void ThrowIfDisposed()
-        {
-            if (_disposed != 0)
-                throw new ObjectDisposedException(nameof(ITv2Session));
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            if (Interlocked.CompareExchange(ref _disposed, 1, 0) != 0)
-                return;
-
-            _log.LogInformation("Disposing ITv2 session");
-
-            await ShutdownAsync().ConfigureAwait(false);
-
-            _transactionSemaphore?.Dispose();
-            _shutdownCts?.Dispose();
-            _encryptionHandler?.Dispose();
-
-            _log.LogInformation("ITv2 session disposed");
-        }
-
         public void Dispose()
         {
-            DisposeAsync().AsTask().GetAwaiter().GetResult();
+            _transactionSemaphore.Dispose();
+            _shutdownCts.Dispose();
+            _encryptionHandler?.Dispose();
         }
-
-        internal record ITv2Message(byte senderSequence, byte receiverSequence, byte? appSequence, IMessageData messageData);
+        enum sessionState
+        {
+            Uninitialized,
+            Connected,
+            Closed
+        }
     }
 }

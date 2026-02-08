@@ -15,13 +15,14 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using DSC.TLink.ITv2.Enumerations;
+using DSC.TLink.ITv2.Transactions;
 using DSC.TLink.Serialization;
-using static DSC.TLink.ITv2.ITv2Session;
+
 
 namespace DSC.TLink.ITv2.Messages
 {
     [ITv2Command(ITv2Command.Connection_Open_Session, isAppSequence: true)]
-    [HandshakeTransaction]
+    [CommandResponseTransaction]
     public record OpenSession : IMessageData
     {
         public Itv2PanelDeviceType DeviceType { get; init; }

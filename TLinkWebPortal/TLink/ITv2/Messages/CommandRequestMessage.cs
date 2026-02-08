@@ -1,9 +1,6 @@
 ﻿using DSC.TLink.ITv2.Enumerations;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using DSC.TLink.ITv2.Transactions;
+using DSC.TLink.Serialization;
 
 namespace DSC.TLink.ITv2.Messages
 {

@@ -26,35 +26,33 @@ namespace DSC.TLink
 		private readonly IServiceProvider _serviceProvider;
 		private readonly ILogger<ITv2ConnectionHandler> _log;
 
-		public ITv2ConnectionHandler(
+        public ITv2ConnectionHandler(
 			IServiceProvider serviceProvider, 
 			ILogger<ITv2ConnectionHandler> log)
 		{
 			_serviceProvider = serviceProvider;
 			_log = log;
-		}
+        }
 
-		public override async Task OnConnectedAsync(ConnectionContext connection)
+        //The class ITv2ConnectionHandler is created as a singleton by the UseConnectionHandler extension method in Startup.
+        //OnConnectedAsync is called for each incoming connection, so, to ensure a new session and client are available for
+        //each connection, we need to manually create the service scope and resolve those classes.
+        public override async Task OnConnectedAsync(ConnectionContext connection)
 		{
 			_log.LogInformation("Connection request from {RemoteEndPoint}", connection.RemoteEndPoint);
 			
 			try
 			{
-				// Create a new scope per connection
-				await using var scope = _serviceProvider.CreateAsyncScope();
-				
-				// Get scoped instances - these will be the same for this connection
-				var session = scope.ServiceProvider.GetRequiredService<ITv2Session>();
-				var client = scope.ServiceProvider.GetRequiredService<TLinkClient>();
-				
-				// Or create manually (simpler for connection-based lifecycle):
-				// var settings = _serviceProvider.GetRequiredService<ITv2Settings>();
-				// var mediator = _serviceProvider.GetRequiredService<IMediator>();
-				// var logger = _serviceProvider.GetRequiredService<ILogger<ITv2Session>>();
-				// var client = new TLinkClient(logger);
-				// var session = new ITv2Session(client, mediator, settings, logger);
-				
-				await session.ListenAsync(connection.Transport, connection.ConnectionClosed);
+                // Create a new scope per connection
+                await using var scope = _serviceProvider.CreateAsyncScope();
+
+                // Get scoped instances - these will be the same for this connection
+                var session = scope.ServiceProvider.GetRequiredService<ITv2Session>();
+                var client = scope.ServiceProvider.GetRequiredService<TLinkClient>();
+
+                await session.InitializeSession(connection.Transport, connection.ConnectionClosed);
+
+				await session.ListenAsync(connection.ConnectionClosed);
 			}
 			catch (Exception ex)
 			{

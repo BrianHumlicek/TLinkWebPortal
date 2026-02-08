@@ -1,12 +1,10 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using DSC.TLink.ITv2.Enumerations;
+using DSC.TLink.ITv2.Transactions;
+using DSC.TLink.Serialization;
 
 namespace DSC.TLink.ITv2.Messages
 {
-    [ITv2Command(Enumerations.ITv2Command.Connection_Software_Version)]
+    [ITv2Command(ITv2Command.Connection_Software_Version)]
     [SimpleAckTransaction]
     internal record ConnectionSoftwareVersion : IMessageData
     {

@@ -1,8 +1,11 @@
-﻿using static DSC.TLink.ITv2.ITv2Session;
+﻿using DSC.TLink.ITv2.Enumerations;
+using DSC.TLink.ITv2.Transactions;
+using DSC.TLink.Serialization;
+
 
 namespace DSC.TLink.ITv2.Messages
 {
-    [ITv2Command(Enumerations.ITv2Command.Notification_Time_Date_Broadcast)]
+    [ITv2Command(ITv2Command.Notification_Time_Date_Broadcast)]
     [SimpleAckTransaction]
     internal record NotificationDateTimeBroadcast: IMessageData
     {

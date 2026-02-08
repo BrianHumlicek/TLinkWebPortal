@@ -1,9 +1,10 @@
-﻿using DSC.TLink.Serialization;
-using static DSC.TLink.ITv2.ITv2Session;
+﻿using DSC.TLink.ITv2.Enumerations;
+using DSC.TLink.ITv2.Transactions;
+using DSC.TLink.Serialization;
 
 namespace DSC.TLink.ITv2.Messages
 {
-    [ITv2Command(Enumerations.ITv2Command.Notification_Life_Style_Zone_Status)]
+    [ITv2Command(ITv2Command.Notification_Life_Style_Zone_Status)]
     [SimpleAckTransaction]
 
     internal record NotificationLifestyleZoneStatus : IMessageData

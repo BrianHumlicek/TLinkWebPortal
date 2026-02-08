@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace DSC.TLink.ITv2
 {
-    internal partial class ITv2Session
+    internal class CommandRequestTransactionAttribute : Attribute
     {
         //stub
     }

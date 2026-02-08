@@ -20,5 +20,14 @@ namespace DSC.TLink.ITv2.Messages
 
         ITv2Command Command => MessageFactory.GetCommand(this);
         bool IsAppSequence => MessageFactory.IsAppSequence(Command);
+        bool IsPublicMessage => MessageFactory.IsPublicMessage(Command);
+        T As<T>() where T : IMessageData
+        {
+            if (this is T typedMessage)
+            {
+                return typedMessage;
+            }
+            throw new InvalidCastException($"Expected message of type {typeof(T).Name} but received {this.GetType().Name}");
+        }
     }
 }

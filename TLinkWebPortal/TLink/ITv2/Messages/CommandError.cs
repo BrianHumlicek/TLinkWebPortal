@@ -1,13 +1,11 @@
 ﻿using DSC.TLink.ITv2.Enumerations;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using DSC.TLink.ITv2.Transactions;
+using DSC.TLink.Serialization;
+
 
 namespace DSC.TLink.ITv2.Messages
 {
-    [ITv2Command(Enumerations.ITv2Command.Command_Error)]
+    [ITv2Command(ITv2Command.Command_Error)]
     [SimpleAckTransaction]
     internal record CommandError : IMessageData
     {

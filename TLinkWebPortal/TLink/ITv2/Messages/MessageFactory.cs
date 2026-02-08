@@ -10,15 +10,13 @@ namespace DSC.TLink.ITv2.Messages
 {
     internal static class MessageFactory
     {
-        private static readonly ImmutableDictionary<ITv2Command, Type> _commandToType;
-        private static readonly ImmutableDictionary<ITv2Command, bool> _commandToAppSeq;
-        private static readonly ImmutableDictionary<Type, ITv2Command> _typeToCommand;
+        private static readonly ImmutableDictionary<ITv2Command, MessageMetadata> _commandLookup;
+        private static readonly ImmutableDictionary<Type, MessageMetadata> _typeLookup;
 
         static MessageFactory()
         {
-            var commandToTypeBuilder = ImmutableDictionary.CreateBuilder<ITv2Command, Type>();
-            var commandToAppSeqBuilder = ImmutableDictionary.CreateBuilder<ITv2Command, bool>();
-            var typeToCommandBuilder = ImmutableDictionary.CreateBuilder<Type, ITv2Command>();
+            var commandLookupBuilder = ImmutableDictionary.CreateBuilder<ITv2Command, MessageMetadata>();
+            var typeLookupBuilder = ImmutableDictionary.CreateBuilder<Type, MessageMetadata>();
 
             var assembly = Assembly.GetExecutingAssembly();
             var messageDataTypes = assembly.GetTypes()
@@ -31,22 +29,26 @@ namespace DSC.TLink.ITv2.Messages
                 {
                     var command = attribute.Command;
                     
-                    if (commandToTypeBuilder.ContainsKey(command))
+                    if (commandLookupBuilder.ContainsKey(command))
                     {
                         throw new InvalidOperationException(
                             $"Duplicate ITv2CommandAttribute found for command '{command}'. " +
-                            $"Types '{commandToTypeBuilder[command].FullName}' and '{type.FullName}' both declare this command.");
+                            $"Types '{commandLookupBuilder[command].messageType.FullName}' and '{type.FullName}' both declare this command.");
                     }
 
-                    commandToTypeBuilder[command] = type;
-                    commandToAppSeqBuilder[command] = attribute.IsAppSequence;
-                    typeToCommandBuilder[type] = command;
+                    var metadata = new MessageMetadata(
+                        messageType: type,
+                        command: attribute.Command,
+                        isAppSequence: attribute.IsAppSequence,
+                        isPublic: type.IsPublic);
+
+                    commandLookupBuilder[command] = metadata;
+                    typeLookupBuilder[type] = metadata;
                 }
             }
 
-            _commandToType = commandToTypeBuilder.ToImmutable();
-            _commandToAppSeq = commandToAppSeqBuilder.ToImmutable();
-            _typeToCommand = typeToCommandBuilder.ToImmutable();
+            _commandLookup = commandLookupBuilder.ToImmutable();
+            _typeLookup = typeLookupBuilder.ToImmutable();
         }
 
         /// <summary>
@@ -81,9 +83,11 @@ namespace DSC.TLink.ITv2.Messages
         /// </summary>
         public static IMessageData DeserializeMessage(ITv2Command command, ReadOnlySpan<byte> payload)
         {
-            if (!_commandToType.TryGetValue(command, out var messageType))
+            var messageType = typeof(DefaultMessage);
+            
+            if (_commandLookup.TryGetValue(command, out var metadata))
             {
-                messageType = typeof(DefaultMessage);                
+                messageType = metadata.messageType;
             }
 
             try
@@ -121,7 +125,7 @@ namespace DSC.TLink.ITv2.Messages
 
             var messageType = message.GetType();
 
-            if (!_typeToCommand.TryGetValue(messageType, out var command))
+            if (!_typeLookup.TryGetValue(messageType, out var metadata))
             {
                 throw new InvalidOperationException(
                     $"No command registered for message type '{messageType.FullName}'. " +
@@ -129,11 +133,11 @@ namespace DSC.TLink.ITv2.Messages
             }
 
             var result = new List<byte>([
-                command.U16HighByte(),
-                command.U16LowByte()
+                metadata.command.U16HighByte(),
+                metadata.command.U16LowByte()
                 ]);
 
-            if (IsAppSequence(command))
+            if (metadata.isAppSequence)
             {
                 if (!appSequence.HasValue)
                 {
@@ -152,7 +156,7 @@ namespace DSC.TLink.ITv2.Messages
             catch (Exception ex)
             {
                 throw new InvalidOperationException(
-                    $"Failed to serialize message type '{messageType.FullName}' for command '{command}'.", ex);
+                    $"Failed to serialize message type '{messageType.FullName}' for command '{metadata.command}'.", ex);
             }
         }
 
@@ -173,9 +177,9 @@ namespace DSC.TLink.ITv2.Messages
             if (message == null) throw new ArgumentNullException(nameof(message));
             var messageType = message.GetType();
 
-            if (_typeToCommand.TryGetValue(messageType, out var command))
+            if (_typeLookup.TryGetValue(messageType, out var metadata))
             {
-                return command;
+                return metadata.command;
             }
 
             throw new InvalidOperationException(
@@ -185,22 +189,37 @@ namespace DSC.TLink.ITv2.Messages
 
         public static bool IsAppSequence(ITv2Command command)
         {
-            if (_commandToAppSeq.TryGetValue(command, out var isAppSeq))
+            if (_commandLookup.TryGetValue(command, out var metadata))
             {
-                return isAppSeq;
+                return metadata.isAppSequence;
+            }
+            return false;
+        }
+
+        public static bool IsPublicMessage(ITv2Command command)
+        {
+            if (_commandLookup.TryGetValue(command, out var metadata))
+            {
+                return metadata.isPublic;
             }
             return false;
         }
 
         public static bool CanCreateMessage(ITv2Command command)
         {
-            return _commandToType.ContainsKey(command);
+            return _commandLookup.ContainsKey(command);
         }
 
         public static Type? GetMessageType(ITv2Command command)
         {
-            _commandToType.TryGetValue(command, out var type);
-            return type;
+            if (_commandLookup.TryGetValue(command, out var metadata))
+            {
+                return metadata.messageType;
+            }
+            throw new InvalidOperationException(
+                $"No message type is registered for command '{command}'. " +
+                $"Ensure the there is a message type decorated with ITv2CommandAttribute.");
         }
+        record MessageMetadata(Type messageType, ITv2Command command, bool isAppSequence, bool isPublic);
     }
 }
