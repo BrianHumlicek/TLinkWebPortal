@@ -19,15 +19,10 @@ using DSC.TLink.ITv2.Encryption;
 using DSC.TLink.ITv2.Enumerations;
 using DSC.TLink.ITv2.Messages;
 using DSC.TLink.ITv2.Transactions;
-using MediatR;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.IO.Pipelines;
-using System.Net.Sockets;
 using System.Text;
-using System.Transactions;
-using static DSC.TLink.ITv2.ITv2Session;
 
 namespace DSC.TLink.ITv2
 {
@@ -36,7 +31,7 @@ namespace DSC.TLink.ITv2
         private readonly ILogger _log;
         private readonly TLinkClient _tlinkClient;
         private readonly ITv2Settings _itv2Settings;
-        private readonly List<ITransaction> _pendingTransactions = new();
+        private readonly List<Transaction> _pendingTransactions = new();
         private readonly SemaphoreSlim _transactionSemaphore = new SemaphoreSlim(1, 1);
         private readonly TaskCompletionSource flushQueueTCS = new TaskCompletionSource();
         private readonly CancellationTokenSource _shutdownCts = new CancellationTokenSource();
@@ -128,7 +123,7 @@ namespace DSC.TLink.ITv2
                 await transaction.BeginOutboundAsync(messagePacket, cancellation);
                 await completeTransactionAsync(transaction);
             }
-            async Task completeTransactionAsync(ITransaction transaction)
+            async Task completeTransactionAsync(Transaction transaction)
             {
                 ITv2MessagePacket messagePacket;
                 while (transaction.CanContinue)
@@ -146,7 +141,7 @@ namespace DSC.TLink.ITv2
         /// Listen for incoming messages and process them through transactions.
         /// </summary>
         /// <param name="cancellationToken">External cancellation token</param>
-        public async Task ListenAsync(CancellationToken cancellationToken = default)
+        public async Task ListenAsync(Action<Task<TransactionResult>> continuation, CancellationToken cancellationToken = default)
         {
             if (_sessionState != sessionState.Connected)
                 throw new InvalidOperationException("Session is not connected/initialized");
@@ -155,11 +150,15 @@ namespace DSC.TLink.ITv2
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
             var linkedToken = linkedCts.Token;
 
+            //The remote communicator will queue messages if there is a disconnection and send them all
+            //once the connection is re-established.  When these messages are being sent, the communicator
+            //doesn't seem to respond/respect sequence numbers of messages it receives.  So, I use this
+            //oneshot timer to allow the queue to empty before I allow messages to be sent out.
             Timer? flushQueueTimer = new Timer(_ => 
             {
                 _log.LogInformation("Receive queue is flushed.  Ready to start sending");
                 flushQueueTCS.SetResult();
-                flushQueueTimer = null;
+                flushQueueTimer = null; //setting this is null combined with the elvis operator gives me quasi-polymorphism so I avoid something like an If check for every message..
                 beginHeartBeat(linkedToken);
             });
             _log.LogInformation("ITv2 session started, listening for messages.");
@@ -168,65 +167,12 @@ namespace DSC.TLink.ITv2
             {
                 while (!linkedToken.IsCancellationRequested)
                 {
-                    flushQueueTimer?.Change(2000, Timeout.Infinite);
+                    flushQueueTimer?.Change(2000, Timeout.Infinite);    //I figure 2 seconds of no messages means the queue is flushed and we can start sending again.
                     var messagePacket = await WaitForMessageAsync(linkedToken);
                     flushQueueTimer?.Change(Timeout.Infinite, Timeout.Infinite);
 
                     _remoteSequence = messagePacket.senderSequence;
-
-                    // Acquire lock with timeout to prevent deadlock
-                    if (!await _transactionSemaphore.WaitAsync(TimeSpan.FromSeconds(30), linkedToken))
-                    {
-                        _log.LogError("Transaction semaphore timeout - possible deadlock");
-                        throw new TimeoutException("Failed to acquire transaction lock within 30 seconds");
-                    }
-                    try   //Try-Finally for _transactionSemaphore
-                    {
-						bool messageHandled = false;
-						foreach (var waitingTransaction in _pendingTransactions)
-						{
-							if (await waitingTransaction.TryContinueAsync(messagePacket, linkedToken))
-							{
-								messageHandled = true;
-                                break;
-							}
-						}
-                        if (!messageHandled)
-                        {
-                            _log.LogMessageDebug("Received", messagePacket.messageData);
-                            if (messagePacket.messageData is DefaultMessage defaultMessage)
-                            {
-                                _log.LogWarning("Command {command}", defaultMessage.Command);
-                                _log.LogWarning($"Data: {ILoggerExtensions.Enumerable2HexString(defaultMessage.Data)}");
-                            }
-
-                            EnsureInboundReceiverSequence(ref messagePacket);
-
-                            ITransaction newTransaction = CreateTransaction(messagePacket.messageData);
-
-							_log.LogDebug("New {TransactionType} started: {MessageType}", newTransaction.GetType().Name, messagePacket.messageData.GetType().Name);
-							await newTransaction.BeginInboundAsync(messagePacket, linkedToken);
-                            
-                            if (newTransaction.CanContinue)
-                            {
-                                _pendingTransactions.Add(newTransaction);
-                            }
-                            else
-                            {
-                                _log.LogDebug("Transaction completed immediately: {MessageType}", messagePacket.messageData.GetType().Name);
-                            }
-                        }
-                        var staleTransactions = _pendingTransactions.Where(tx => !tx.CanContinue).ToList();
-                        foreach (var stale in staleTransactions)
-                        {
-                            _log.LogDebug("Removing completed transaction: {Type}", stale.GetType().Name);
-                            _pendingTransactions.Remove(stale);
-                        }
-                    }
-                    finally
-                    {
-                        _transactionSemaphore.Release();
-                    }
+                    await handleInboundMessagePacket(messagePacket, continuation, linkedToken);
                 }
             }
             catch (OperationCanceledException) when (linkedToken.IsCancellationRequested)
@@ -242,6 +188,63 @@ namespace DSC.TLink.ITv2
             {
                 _sessionState = sessionState.Closed;
                 _log.LogInformation("ITv2 session listen loop exited");
+            }
+        }
+        async Task handleInboundMessagePacket(ITv2MessagePacket messagePacket, Action<Task<TransactionResult>> continuation, CancellationToken cancellation)
+        {
+            // Acquire lock with timeout to prevent deadlock
+            if (!await _transactionSemaphore.WaitAsync(TimeSpan.FromSeconds(30), cancellation))
+            {
+                _log.LogError("Transaction semaphore timeout - possible deadlock");
+                throw new TimeoutException("Failed to acquire transaction lock within 30 seconds");
+            }
+            try
+            {
+                foreach (var waitingTransaction in _pendingTransactions)
+                {
+                    if (await waitingTransaction.TryContinueAsync(messagePacket, cancellation))
+                    {
+                        return;
+                    }
+                }
+
+                _log.LogMessageDebug("Received", messagePacket.messageData);
+                if (messagePacket.messageData is DefaultMessage defaultMessage)
+                {
+                    _log.LogWarning("Command {command}", defaultMessage.Command);
+                    _log.LogWarning($"Data: {ILoggerExtensions.Enumerable2HexString(defaultMessage.Data)}");
+                }
+
+                EnsureInboundReceiverSequence(ref messagePacket);
+
+                var newTransaction = CreateTransaction(messagePacket.messageData);
+                
+                _ = newTransaction.TransactionResult.ContinueWith(continuation, cancellation);
+
+                _log.LogDebug("New {TransactionType} started: {MessageType}", newTransaction.GetType().Name, messagePacket.messageData.GetType().Name);
+                await newTransaction.BeginInboundAsync(messagePacket, cancellation);
+
+                if (newTransaction.CanContinue)
+                {
+                    _pendingTransactions.Add(newTransaction);
+                }
+                else
+                {
+                    newTransaction.Dispose();
+                    _log.LogDebug("Transaction completed immediately: {MessageType}", messagePacket.messageData.GetType().Name);
+                }
+
+                var staleTransactions = _pendingTransactions.Where(tx => !tx.CanContinue).ToList();
+                foreach (var stale in staleTransactions)
+                {
+                    _log.LogDebug("Removing completed transaction: {Type}", stale.GetType().Name);
+                    _pendingTransactions.Remove(stale);
+                    stale.Dispose();
+                }
+            }
+            finally
+            {
+                _transactionSemaphore.Release();
             }
         }
 
@@ -278,11 +281,13 @@ namespace DSC.TLink.ITv2
         /// <summary>
         /// Send a message and manage its transaction lifecycle.
         /// </summary>
-        public async Task SendMessageAsync(IMessageData messageData, CancellationToken cancellationToken = default)
+        public async Task<TransactionResult> SendMessageAsync(IMessageData messageData, CancellationToken cancellationToken = default)
         {
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
             var linkedToken = linkedCts.Token;
             await flushQueueTCS.Task;
+
+            var newTransaction = CreateTransaction(messageData);
 
             if (!await _transactionSemaphore.WaitAsync(TimeSpan.FromSeconds(30), linkedToken).ConfigureAwait(false))
             {
@@ -292,8 +297,6 @@ namespace DSC.TLink.ITv2
             try
             {
                 var message = CreateNextOutboundMessagePacket(messageData);
-
-                ITransaction newTransaction = CreateTransaction(messageData);
 
                 _log.LogMessageDebug("Sending", messageData);
                 await newTransaction.BeginOutboundAsync(message, linkedToken).ConfigureAwait(false);
@@ -308,6 +311,8 @@ namespace DSC.TLink.ITv2
             {
                 _transactionSemaphore.Release();
             }
+            //return await must happen outside of semaphore lock to prevent deadlocks.
+            return await newTransaction.TransactionResult;
         }
 
         /// <summary>
@@ -404,7 +409,7 @@ namespace DSC.TLink.ITv2
                 appSequence:      appSeq,
                 messageData:      messageData);
         }
-        ITransaction CreateTransaction(IMessageData messageData) => TransactionFactory.CreateTransaction(messageData, _log, SendTransactionMessageAsync);
+        Transaction CreateTransaction(IMessageData messageData) => TransactionFactory.CreateTransaction(messageData, _log, SendTransactionMessageAsync);
         async Task SendTransactionMessageAsync(ITv2MessagePacket message, CancellationToken cancellationToken)
         {
             var messageBytes = new List<byte>(

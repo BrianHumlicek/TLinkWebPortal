@@ -26,7 +26,7 @@ namespace DSC.TLink.ITv2.Transactions
 			_state = State.Initial;
 		}
 
-        protected override bool CanContinue => _state switch
+        protected override bool Pending => _state switch
         {
             State.AwaitingCommandResponse => true,
             State.AwaitingSimpleAck => true,
@@ -49,7 +49,7 @@ namespace DSC.TLink.ITv2.Transactions
 			await Task.CompletedTask; // Nothing to send yet
 		}
 
-		protected override async Task ContinueAsync(ITv2MessagePacket message, CancellationToken cancellationToken)
+		protected override async Task<bool> TryConsumeMessageAsync(ITv2MessagePacket message, CancellationToken cancellationToken)
 		{
 			switch (_state)
 			{
@@ -59,7 +59,7 @@ namespace DSC.TLink.ITv2.Transactions
 					{
 						log.LogWarning("Expected CommandResponse, got {Type}", message.messageData.GetType().Name);
 						Abort();
-						return;
+						return true;
 					}
 
 					_responseCode = response.ResponseCode;
@@ -83,7 +83,7 @@ namespace DSC.TLink.ITv2.Transactions
 					{
 						log.LogWarning("Expected SimpleAck, got {Type}", message.messageData.GetType().Name);
 						Abort();
-						return;
+						return true;
 					}
 
 					_state = State.Complete;
@@ -94,12 +94,13 @@ namespace DSC.TLink.ITv2.Transactions
 					log.LogWarning("Unexpected message in state {State}", _state);
 					break;
 			}
-		}
+            return true;
+        }
 
-		/// <summary>
-		/// Get the response code if the transaction completed (for outbound transactions).
-		/// </summary>
-		public CommandResponseCode? ResponseCode => _responseCode;
+        /// <summary>
+        /// Get the response code if the transaction completed (for outbound transactions).
+        /// </summary>
+        public CommandResponseCode? ResponseCode => _responseCode;
 
 		private enum State
 		{

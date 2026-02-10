@@ -41,7 +41,7 @@ namespace DSC.TLink.ITv2.Transactions
             Timeout = TimeSpan.FromSeconds(timeoutSeconds);
         }
 
-        ITransaction ICreateTransaction.CreateTransaction(ILogger log, Func<ITv2MessagePacket, CancellationToken, Task> sendMessageDelegate)
+        Transaction ICreateTransaction.CreateTransaction(ILogger log, Func<ITv2MessagePacket, CancellationToken, Task> sendMessageDelegate)
         {
             return new CommandResponseTransaction(log, sendMessageDelegate, Timeout);
         }

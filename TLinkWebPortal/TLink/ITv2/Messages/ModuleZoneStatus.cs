@@ -7,7 +7,7 @@ namespace DSC.TLink.ITv2.Messages
 {
     [ITv2Command(ITv2Command.ModuleStatus_Zone_Status)]
     [SimpleAckTransaction]
-    internal record ModuleZoneStatus : IMessageData
+    public record ModuleZoneStatus : IMessageData
     {
         [CompactInteger]
         public int ZoneStart { get; init; }

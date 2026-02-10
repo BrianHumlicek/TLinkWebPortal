@@ -1,6 +1,7 @@
-using DSC.TLink;
+﻿using DSC.TLink;
 using DSC.TLink.ITv2;
 using TLinkWebPortal.Components;
+using TLinkWebPortal.Services;
 using TLinkWebPortal.Services.Settings;
 using MudBlazor.Services;
 
@@ -31,8 +32,11 @@ namespace TLinkWebPortal
                 .AddInteractiveServerComponents()
                 .AddInteractiveWebAssemblyComponents();
 
-            // Register TLink services
-            builder.UseITv2();
+            // ✅ Register TLink services and pass this assembly for MediatR scanning
+            builder.UseITv2(typeof(Program).Assembly);
+
+            // Register PartitionStatusService as Singleton
+            builder.Services.AddSingleton<IPartitionStatusService, PartitionStatusService>();
 
             // Add MudBlazor services
             builder.Services.AddMudServices();

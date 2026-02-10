@@ -7,7 +7,7 @@
 // (at your option) any later version.
 //
 // This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY, without even the implied warranty of
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 //
@@ -20,20 +20,53 @@ using System.Net;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.Extensions.DependencyInjection;
 using DSC.TLink.ITv2;
+using DSC.TLink.ITv2.MediatR;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
+using System.Reflection;
 
 namespace DSC.TLink
 {
 	public static class StartupExtensions
 	{
-		public static WebApplicationBuilder UseITv2(this WebApplicationBuilder builder)
+		/// <summary>
+		/// Registers ITv2 services and configures Kestrel for panel connections.
+		/// </summary>
+		/// <param name="builder">The web application builder</param>
+		/// <param name="additionalAssemblies">Additional assemblies to scan for MediatR handlers (e.g., web project assembly)</param>
+		public static WebApplicationBuilder UseITv2(
+			this WebApplicationBuilder builder, 
+			params Assembly[] additionalAssemblies)
 		{
+            // Configuration
             builder.Services.Configure<ITv2Settings>(builder.Configuration.GetSection(ITv2Settings.SectionName));
             builder.Services.AddSingleton(sp => 
                 sp.GetRequiredService<IOptions<ITv2Settings>>().Value);
 
-			builder.WebHost.ConfigureKestrel((context, options) =>
+            // ✅ MediatR - Register TLink assembly + any additional assemblies passed in
+            builder.Services.AddMediatR(configuration =>
+            {
+                // Always scan the TLink assembly
+                configuration.RegisterServicesFromAssembly(typeof(ITv2Session).Assembly);
+                
+                // Scan any additional assemblies (e.g., web project)
+                foreach (var assembly in additionalAssemblies)
+                {
+                    configuration.RegisterServicesFromAssembly(assembly);
+                }
+            });
+
+            // Singleton services (shared across all connections)
+            builder.Services.AddSingleton<IITv2SessionManager, ITv2SessionManager>();
+            builder.Services.AddSingleton<SessionMediator>();
+            builder.Services.AddSingleton<ITv2ConnectionHandler>();
+
+            // Scoped services (per-connection)
+            builder.Services.AddScoped<TLinkClient>();
+            builder.Services.AddScoped<ITv2Session>();
+
+            // Configure Kestrel with ITv2 connection handler
+            builder.WebHost.ConfigureKestrel((context, options) =>
 			{
                 var listenPort = context.Configuration.GetValue($"{ITv2Settings.SectionName}:{nameof(ITv2Settings.ListenPort)}", ITv2Settings.DefaultListenPort);
                 
@@ -48,14 +81,7 @@ namespace DSC.TLink
                 options.ListenLocalhost(7013, listenOptions => listenOptions.UseHttps()); // HTTPS
 			});
 
-            builder.Services.AddScoped<TLinkClient>();
-            builder.Services.AddScoped<ITv2Session>();
-
-			builder.Services.AddMediatR((configuration) =>
-			{
-				configuration.RegisterServicesFromAssemblyContaining<ITv2Session>();
-			});
-			builder.Services.AddLogging();
+            builder.Services.AddLogging();
 			return builder;
 		}
 	}

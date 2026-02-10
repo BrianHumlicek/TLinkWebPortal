@@ -1,147 +1,236 @@
 ﻿@page "/"
+@using TLinkWebPortal.Services
+@using TLinkWebPortal.Services.Models
+@using DSC.TLink.ITv2.MediatR
+@inject IPartitionStatusService PartitionService
+@inject IITv2SessionManager SessionManager
+@implements IDisposable
 
-@inject NavigationManager NavManager
+<PageTitle>Security Panel Status</PageTitle>
 
-<PageTitle>Home</PageTitle>
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <MudText Typo="Typo.h4" GutterBottom="true">Security Panel Status</MudText>
 
-<div class="container my-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2 class="mb-0">System Control</h2>
-        <button class="btn btn-outline-secondary" @onclick="OpenSettings">Settings</button>
-    </div>
+    @if (!activeSessions.Any())
+    {
+        <MudAlert Severity="Severity.Warning" Class="mt-4">
+            <MudText>No active panel connections. Waiting for panel to connect...</MudText>
+        </MudAlert>
+    }
+    else
+    {
+        <MudSelect T="string" Label="Active Session" @bind-Value="selectedSessionId" Class="mb-4">
+            @foreach (var sessionId in activeSessions)
+            {
+                <MudSelectItem T="string" Value="@sessionId">@sessionId</MudSelectItem>
+            }
+        </MudSelect>
 
-    <div class="row">
-        <!-- Controls -->
-        <div class="col-md-6 mb-4">
-            <div class="card shadow-sm">
-                <div class="card-body">
-                    <h5 class="card-title">Alarm</h5>
-                    <div class="d-grid gap-3">
-                        <button class="btn btn-danger btn-lg" @onclick="ArmSystem" aria-pressed="@isArmed">
-                            Arm System
-                        </button>
-                        <button class="btn btn-success btn-lg" @onclick="DisarmSystem" aria-pressed="@( !isArmed )">
-                            Disarm System
-                        </button>
-                    </div>
+        @if (!string.IsNullOrEmpty(selectedSessionId))
+        {
+            var partitions = PartitionService.GetPartitions(selectedSessionId);
+            
+            @if (!partitions.Any())
+            {
+                <MudAlert Severity="Severity.Info" Class="mt-4">
+                    <MudText>Waiting for partition status data...</MudText>
+                </MudAlert>
+            }
+            else
+            {
+                <MudGrid>
+                    @foreach (var (partitionNumber, partition) in partitions)
+                    {
+                        <MudItem xs="12" lg="6">
+                            <MudCard Elevation="4" Class="mb-4">
+                                <MudCardHeader>
+                                    <CardHeaderContent>
+                                        <MudText Typo="Typo.h5">
+                                            <MudIcon Icon="@Icons.Material.Filled.Shield" Class="mr-2" />
+                                            Partition @partitionNumber
+                                        </MudText>
+                                    </CardHeaderContent>
+                                    <CardHeaderActions>
+                                        <MudChip T="string" 
+                                                 Color="@(partition.IsReady ? Color.Success : Color.Warning)" 
+                                                 Size="Size.Small">
+                                            @partition.ArmMode
+                                        </MudChip>
+                                    </CardHeaderActions>
+                                </MudCardHeader>
+                                <MudCardContent>
+                                    <MudStack Spacing="2">
+                                        <MudText>
+                                            <strong>Status:</strong> 
+                                            @(partition.IsReady ? "Ready to Arm" : "Not Ready")
+                                        </MudText>
+                                        <MudText>
+                                            <strong>Armed:</strong> 
+                                            @(partition.IsArmed ? "Yes" : "No")
+                                        </MudText>
+                                        <MudText Typo="Typo.caption">
+                                            Last Updated: @partition.LastUpdated.ToLocalTime().ToString("HH:mm:ss")
+                                        </MudText>
 
-                    <hr />
+                                        <MudDivider Class="my-2" />
 
-                    <div class="mt-3">
-                        <strong>Status:</strong>
-                        <span class="ms-2 badge @(isArmed ? "bg-danger" : "bg-secondary")">
-                            @(isArmed ? "Armed" : "Disarmed")
-                        </span>
-                        <div class="text-muted small mt-1">
-                            Last change: @lastStateChange.ToLocalTime().ToString("g")
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+                                        <MudText Typo="Typo.h6" Class="mt-2">
+                                            Zones (@partition.Zones.Count)
+                                        </MudText>
 
-        <!-- Zones -->
-        <div class="col-md-6 mb-4">
-            <div class="card shadow-sm">
-                <div class="card-body">
-                    <h5 class="card-title">Zones</h5>
-
-                    <div class="list-group">
-                        @foreach (var z in zones)
-                        {
-                            <div class="list-group-item d-flex justify-content-between align-items-center">
-                                <div>
-                                    <div class="fw-semibold">@z.Name</div>
-                                    <div class="text-muted small">Last updated: @z.LastChanged.ToLocalTime().ToString("g")</div>
-                                </div>
-
-                                <div class="text-end">
-                                    @if (z.IsOpen)
-                                    {
-                                        <span class="badge bg-danger me-2">Open</span>
-                                    }
-                                    else
-                                    {
-                                        <span class="badge bg-success me-2">Closed</span>
-                                    }
-
-                                    @if (z.IsBypassed)
-                                    {
-                                        <span class="badge bg-warning text-dark me-2">Bypassed</span>
-                                    }
-
-                                    <button class="btn btn-outline-sm btn-outline-secondary btn-sm me-1" @onclick="@(() => ToggleBypass(z))">
-                                        @(z.IsBypassed ? "Unbypass" : "Bypass")
-                                    </button>
-                                    <button class="btn btn-outline-sm btn-primary btn-sm" @onclick="@(() => ToggleZoneState(z))">
-                                        Toggle
-                                    </button>
-                                </div>
-                            </div>
-                        }
-                    </div>
-
-                    <div class="mt-3 text-muted small">
-                        (Use the Toggle button to simulate zone open/close. Bypassed zones are ignored by the alarm.)
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
+                                        @if (!partition.Zones.Any())
+                                        {
+                                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                                No zone data available
+                                            </MudText>
+                                        }
+                                        else
+                                        {
+                                            <MudGrid Spacing="1">
+                                                @foreach (var (zoneNumber, zone) in partition.Zones.OrderBy(z => z.Key))
+                                                {
+                                                    <MudItem xs="6" sm="4" md="3">
+                                                        <MudTooltip Text="@GetZoneTooltip(zone)">
+                                                            <MudChip T="string" 
+                                                                     Size="Size.Small" 
+                                                                     Color="@GetZoneColor(zone)"
+                                                                     Variant="@(zone.IsOpen || zone.IsFaulted || zone.IsTampered ? Variant.Filled : Variant.Outlined)">
+                                                                <MudIcon Icon="@GetZoneIcon(zone)" Size="Size.Small" Class="mr-1" />
+                                                                Z@zoneNumber
+                                                            </MudChip>
+                                                        </MudTooltip>
+                                                    </MudItem>
+                                                }
+                                            </MudGrid>
+                                        }
+                                    </MudStack>
+                                </MudCardContent>
+                                <MudCardActions>
+                                    <MudButton Variant="Variant.Text" 
+                                               Color="Color.Primary" 
+                                               OnClick="@(() => ShowZoneDetails(partitionNumber))"
+                                               Disabled="!partition.Zones.Any()">
+                                        View Details
+                                    </MudButton>
+                                </MudCardActions>
+                            </MudCard>
+                        </MudItem>
+                    }
+                </MudGrid>
+            }
+        }
+    }
+</MudContainer>
 
 @code {
-    private bool isArmed = false;
-    private DateTime lastStateChange = DateTime.UtcNow;
+    private string selectedSessionId = "";
+    private List<string> activeSessions = new();
+    private System.Threading.Timer? refreshTimer;
 
-    private List<Zone> zones = new()
+    protected override void OnInitialized()
     {
-        new Zone("Front Door", false, false, DateTime.UtcNow),
-        new Zone("Back Door", false, false, DateTime.UtcNow),
-        new Zone("Garage", false, false, DateTime.UtcNow),
-        new Zone("Living Room Motion", false, false, DateTime.UtcNow),
-        new Zone("Basement Window", true, false, DateTime.UtcNow),
-    };
+        // Get active sessions
+        RefreshSessions();
 
-    private void ArmSystem()
-    {
-        isArmed = true;
-        lastStateChange = DateTime.UtcNow;
-        // TODO: call backend service to arm the real system
-    }
+        // Subscribe to state change events
+        PartitionService.PartitionStateChanged += OnPartitionStateChanged;
+        PartitionService.ZoneStateChanged += OnZoneStateChanged;
 
-    private void DisarmSystem()
-    {
-        isArmed = false;
-        lastStateChange = DateTime.UtcNow;
-        // TODO: call backend service to disarm the real system
-    }
-
-    // Toggle a zone open/closed by replacing the item with a 'with' copy
-    private void ToggleZoneState(Zone z)
-    {
-        var idx = zones.IndexOf(z);
-        if (idx >= 0)
+        // Refresh session list periodically
+        refreshTimer = new System.Threading.Timer(_ =>
         {
-            zones[idx] = zones[idx] with { IsOpen = !zones[idx].IsOpen, LastChanged = DateTime.UtcNow };
-            StateHasChanged();
+            InvokeAsync(() =>
+            {
+                RefreshSessions();
+                StateHasChanged();
+            });
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private void RefreshSessions()
+    {
+        var sessions = SessionManager.GetActiveSessions().ToList();
+        
+        // Update list if changed
+        if (!sessions.SequenceEqual(activeSessions))
+        {
+            activeSessions = sessions;
+            
+            // Auto-select first session if none selected
+            if (string.IsNullOrEmpty(selectedSessionId) && activeSessions.Any())
+            {
+                selectedSessionId = activeSessions.First();
+            }
+            // Clear selection if selected session disconnected
+            else if (!activeSessions.Contains(selectedSessionId))
+            {
+                selectedSessionId = activeSessions.FirstOrDefault() ?? "";
+            }
         }
     }
 
-    private void ToggleBypass(Zone z)
+    private void OnPartitionStateChanged(object? sender, PartitionStateChangedEventArgs e)
     {
-        var idx = zones.IndexOf(z);
-        if (idx >= 0)
+        if (e.SessionId == selectedSessionId)
         {
-            zones[idx] = zones[idx] with { IsBypassed = !zones[idx].IsBypassed, LastChanged = DateTime.UtcNow };
-            StateHasChanged();
+            InvokeAsync(StateHasChanged);
         }
     }
 
-    private void OpenSettings()
+    private void OnZoneStateChanged(object? sender, ZoneStateChangedEventArgs e)
     {
-        NavManager.NavigateTo("/settings");
+        if (e.SessionId == selectedSessionId)
+        {
+            InvokeAsync(StateHasChanged);
+        }
     }
-	public sealed record Zone(string Name, bool IsOpen, bool IsBypassed, DateTime LastChanged);
 
+    private Color GetZoneColor(ZoneState zone)
+    {
+        if (zone.IsTampered) return Color.Error;
+        if (zone.IsFaulted) return Color.Error;
+        if (zone.IsOpen) return Color.Warning;
+        if (zone.IsBypassed) return Color.Info;
+        return Color.Success;
+    }
+
+    private string GetZoneIcon(ZoneState zone)
+    {
+        if (zone.IsTampered) return Icons.Material.Filled.Error;
+        if (zone.IsFaulted) return Icons.Material.Filled.Warning;
+        if (zone.IsOpen) return Icons.Material.Filled.LockOpen;
+        if (zone.IsBypassed) return Icons.Material.Filled.Block;
+        return Icons.Material.Filled.Lock;
+    }
+
+    private string GetZoneTooltip(ZoneState zone)
+    {
+        var status = new List<string>();
+        
+        if (!string.IsNullOrEmpty(zone.ZoneName))
+            status.Add(zone.ZoneName);
+        
+        status.Add(zone.IsOpen ? "OPEN" : "CLOSED");
+        
+        if (zone.IsTampered) status.Add("TAMPERED");
+        if (zone.IsFaulted) status.Add("FAULTED");
+        if (zone.IsBypassed) status.Add("BYPASSED");
+        
+        status.Add($"Updated: {zone.LastUpdated.ToLocalTime():HH:mm:ss}");
+        
+        return string.Join(" | ", status);
+    }
+
+    private void ShowZoneDetails(byte partitionNumber)
+    {
+        // TODO: Navigate to detailed zone view or show dialog
+        Console.WriteLine($"Show details for partition {partitionNumber}");
+    }
+
+    public void Dispose()
+    {
+        PartitionService.PartitionStateChanged -= OnPartitionStateChanged;
+        PartitionService.ZoneStateChanged -= OnZoneStateChanged;
+        refreshTimer?.Dispose();
+    }
 }

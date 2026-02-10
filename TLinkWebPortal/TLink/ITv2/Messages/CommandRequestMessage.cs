@@ -5,8 +5,8 @@ using DSC.TLink.Serialization;
 namespace DSC.TLink.ITv2.Messages
 {
     [ITv2Command(ITv2Command.ModuleStatus_Command_Request, isAppSequence: true)]
-    [SimpleAckTransaction]
-    internal record CommandRequestMessage : IMessageData
+    [CommandRequestTransaction] // ✅ Use CommandRequestTransaction
+    public record CommandRequestMessage : IMessageData
     {
         public ITv2Command CommandRequest { get; init; }
         public byte[] Data { get; init; } = Array.Empty<byte>();

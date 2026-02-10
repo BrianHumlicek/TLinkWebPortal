@@ -7,7 +7,7 @@ namespace DSC.TLink.ITv2.Messages
 {
     [ITv2Command(ITv2Command.Notification_Time_Date_Broadcast)]
     [SimpleAckTransaction]
-    internal record NotificationDateTimeBroadcast: IMessageData
+    public record NotificationDateTimeBroadcast: IMessageData
     {
         public DateTime DateTime { get; init; }
     }

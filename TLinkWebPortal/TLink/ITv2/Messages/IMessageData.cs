@@ -6,22 +6,22 @@ namespace DSC.TLink.ITv2.Messages
     /// Base interface for all ITv2 protocol message data types.
     /// Provides type-safe message handling and automatic serialization via MessageFactory.
     /// </summary>
-    internal interface IMessageData
+    public interface IMessageData
     {
         /// <summary>
         /// Serialize this message to bytes for transmission.
         /// Default implementation delegates to MessageFactory.
         /// Override only if custom serialization logic is required.
         /// </summary>
-        List<byte> Serialize(byte? appSequence)
+        internal List<byte> Serialize(byte? appSequence)
         {
             return MessageFactory.SerializeMessage(appSequence, this);
         }
 
-        ITv2Command Command => MessageFactory.GetCommand(this);
-        bool IsAppSequence => MessageFactory.IsAppSequence(Command);
-        bool IsPublicMessage => MessageFactory.IsPublicMessage(Command);
-        T As<T>() where T : IMessageData
+        internal ITv2Command Command => MessageFactory.GetCommand(this);
+        internal bool IsAppSequence => MessageFactory.IsAppSequence(Command);
+        internal bool IsPublicMessage => MessageFactory.IsPublicMessage(Command);
+        internal T As<T>() where T : IMessageData
         {
             if (this is T typedMessage)
             {

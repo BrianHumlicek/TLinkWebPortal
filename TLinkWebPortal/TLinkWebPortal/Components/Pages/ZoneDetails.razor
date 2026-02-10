@@ -1,0 +1,168 @@
+@page "/zones/{SessionId}/{PartitionNumber:int}"
+@using TLinkWebPortal.Services
+@using TLinkWebPortal.Services.Models
+@inject IPartitionStatusService PartitionService
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<PageTitle>Zone Details - Partition @PartitionNumber</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudBreadcrumbs Items="_breadcrumbs" Class="mb-4" />
+
+    <MudText Typo="Typo.h4" GutterBottom="true">
+        Partition @PartitionNumber - Zone Details
+    </MudText>
+
+    @if (partition == null)
+    {
+        <MudAlert Severity="Severity.Warning">
+            Partition not found or no data available.
+        </MudAlert>
+    }
+    else
+    {
+        <MudGrid>
+            @foreach (var (zoneNumber, zone) in partition.Zones.OrderBy(z => z.Key))
+            {
+                <MudItem xs="12" sm="6" md="4">
+                    <MudCard Outlined="true">
+                        <MudCardHeader>
+                            <CardHeaderContent>
+                                <MudText Typo="Typo.h6">
+                                    Zone @zoneNumber
+                                    @if (!string.IsNullOrEmpty(zone.ZoneName))
+                                    {
+                                        <br />
+                                        <MudText Typo="Typo.caption">@zone.ZoneName</MudText>
+                                    }
+                                </MudText>
+                            </CardHeaderContent>
+                            <CardHeaderActions>
+                                <MudIcon Icon="@GetZoneIcon(zone)" 
+                                         Color="@GetZoneColor(zone)" 
+                                         Size="Size.Large" />
+                            </CardHeaderActions>
+                        </MudCardHeader>
+                        <MudCardContent>
+                            <MudStack Spacing="1">
+                                <MudText>
+                                    <MudIcon Icon="@Icons.Material.Filled.Lock" Size="Size.Small" />
+                                    Status: <strong>@(zone.IsOpen ? "OPEN" : "CLOSED")</strong>
+                                </MudText>
+                                
+                                @if (zone.IsFaulted)
+                                {
+                                    <MudText Color="Color.Error">
+                                        <MudIcon Icon="@Icons.Material.Filled.Warning" Size="Size.Small" />
+                                        FAULTED
+                                    </MudText>
+                                }
+                                
+                                @if (zone.IsTampered)
+                                {
+                                    <MudText Color="Color.Error">
+                                        <MudIcon Icon="@Icons.Material.Filled.Error" Size="Size.Small" />
+                                        TAMPERED
+                                    </MudText>
+                                }
+                                
+                                @if (zone.IsBypassed)
+                                {
+                                    <MudText Color="Color.Info">
+                                        <MudIcon Icon="@Icons.Material.Filled.Block" Size="Size.Small" />
+                                        BYPASSED
+                                    </MudText>
+                                }
+                                
+                                <MudDivider Class="my-2" />
+                                
+                                <MudText Typo="Typo.caption">
+                                    Last Updated: @zone.LastUpdated.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+                                </MudText>
+                            </MudStack>
+                        </MudCardContent>
+                    </MudCard>
+                </MudItem>
+            }
+        </MudGrid>
+    }
+</MudContainer>
+
+@code {
+    [Parameter]
+    public string SessionId { get; set; } = "";
+
+    [Parameter]
+    public int PartitionNumber { get; set; }
+
+    private PartitionState? partition;
+    private List<BreadcrumbItem> _breadcrumbs = new();
+
+    protected override void OnInitialized()
+    {
+        _breadcrumbs = new List<BreadcrumbItem>
+        {
+            new BreadcrumbItem("Home", href: "/"),
+            new BreadcrumbItem($"Partition {PartitionNumber}", href: null, disabled: true)
+        };
+
+        RefreshPartition();
+        
+        PartitionService.PartitionStateChanged += OnPartitionStateChanged;
+        PartitionService.ZoneStateChanged += OnZoneStateChanged;
+    }
+
+    private void RefreshPartition()
+    {
+        partition = PartitionService.GetPartition(SessionId, (byte)PartitionNumber);
+    }
+
+    private void OnPartitionStateChanged(object? sender, PartitionStateChangedEventArgs e)
+    {
+        if (e.SessionId == SessionId && e.Partition.PartitionNumber == PartitionNumber)
+        {
+            InvokeAsync(() =>
+            {
+                RefreshPartition();
+                StateHasChanged();
+            });
+        }
+    }
+
+    private void OnZoneStateChanged(object? sender, ZoneStateChangedEventArgs e)
+    {
+        if (e.SessionId == SessionId && e.PartitionNumber == PartitionNumber)
+        {
+            InvokeAsync(() =>
+            {
+                RefreshPartition();
+                StateHasChanged();
+            });
+        }
+    }
+
+    private Color GetZoneColor(ZoneState zone)
+    {
+        if (zone.IsTampered) return Color.Error;
+        if (zone.IsFaulted) return Color.Error;
+        if (zone.IsOpen) return Color.Warning;
+        if (zone.IsBypassed) return Color.Info;
+        return Color.Success;
+    }
+
+    private string GetZoneIcon(ZoneState zone)
+    {
+        if (zone.IsTampered) return Icons.Material.Filled.Error;
+        if (zone.IsFaulted) return Icons.Material.Filled.Warning;
+        if (zone.IsOpen) return Icons.Material.Filled.LockOpen;
+        if (zone.IsBypassed) return Icons.Material.Filled.Block;
+        return Icons.Material.Filled.Lock;
+    }
+
+    public void Dispose()
+    {
+        PartitionService.PartitionStateChanged -= OnPartitionStateChanged;
+        PartitionService.ZoneStateChanged -= OnZoneStateChanged;
+    }
+}

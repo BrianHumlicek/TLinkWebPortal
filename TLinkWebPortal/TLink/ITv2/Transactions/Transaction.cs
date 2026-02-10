@@ -23,100 +23,95 @@ namespace DSC.TLink.ITv2.Transactions
     /// - OnTimeout() called if transaction doesn't complete in time
     /// - Session periodically cleans up timed-out transactions
     /// </summary>
-    internal abstract class Transaction : ITransaction
+    internal abstract class Transaction : IDisposable
 	{
         private ILogger _log;
         private Func<ITv2MessagePacket, CancellationToken, Task> _sendMessageDelegate;
 
         private byte localSequence, remoteSequence;
         private byte? appSequence;
+        private IMessageData _initiatingMessage;
         private Func<ITv2MessagePacket, bool> isCorrelated = new Func<ITv2MessagePacket, bool>(message => false);
 
         // Timeout infrastructure
         private readonly TimeSpan _timeout;
 		private readonly CancellationTokenSource _timeoutCts = new();
 
-		protected Transaction(ILogger log, Func<ITv2MessagePacket, CancellationToken, Task> sendMessageDelegate, TimeSpan? timeout = null)
+        private TaskCompletionSource<TransactionResult> _completionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        protected Transaction(ILogger log, Func<ITv2MessagePacket, CancellationToken, Task> sendMessageDelegate, TimeSpan? timeout = null)
 		{
             _log = log;
             _sendMessageDelegate = sendMessageDelegate;
             _timeout = timeout ?? Timeout.InfiniteTimeSpan;
         }
+        public async Task BeginInboundAsync(ITv2MessagePacket message, CancellationToken cancellationToken)
+        {
+            _timeoutCts.CancelAfter(_timeout);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _timeoutCts.Token);
 
+            remoteSequence = message.senderSequence;
+            localSequence = message.receiverSequence;
+            appSequence = message.appSequence;
+            isCorrelated = inboundCorrelataion;
+            _initiatingMessage = message.messageData;
+            await InitializeInboundAsync(linkedCts.Token);
+        }
+
+        public async Task BeginOutboundAsync(ITv2MessagePacket message, CancellationToken cancellationToken)
+        {
+            _timeoutCts.CancelAfter(_timeout);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _timeoutCts.Token);
+
+            localSequence = message.senderSequence;
+            remoteSequence = message.receiverSequence;
+            appSequence = message.appSequence;
+            isCorrelated = outboundCorrelataion;
+            _initiatingMessage = message.messageData;
+            await _sendMessageDelegate(message, linkedCts.Token);
+            await InitializeOutboundAsync(linkedCts.Token);
+        }
+
+        public async Task<bool> TryContinueAsync(ITv2MessagePacket message, CancellationToken cancellationToken)
+        {
+            if (isCorrelated.Invoke(message) && CanContinue)
+            {
+                //When sending an outbound transaction, I sync the remote sequence on the first (and subsequent) reply.
+                //This mimicks the behaviour I see from the TL280, though it doesn't seem to impact functionality.
+                remoteSequence = message.senderSequence;
+                return await TryConsumeMessageAsync(message, cancellationToken);
+            }
+            return false;
+        }
+        public bool CanContinue => Pending && !_timeoutCts.IsCancellationRequested;
+        public Task<TransactionResult> TransactionResult => _completionSource.Task;
         protected ILogger log => _log;
-        protected abstract Task ContinueAsync(ITv2MessagePacket message, CancellationToken cancellationToken);
-		protected abstract bool CanContinue { get; }
-			
-		protected Task SendMessageAsync(IMessageData messageData, CancellationToken cancellationToken)
-		{
+        protected IMessageData InitiatingMessage => _initiatingMessage;
+        protected Task SendMessageAsync(IMessageData messageData, CancellationToken cancellationToken)
+        {
             // Link with timeout cancellation
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _timeoutCts.Token);
             var message = new ITv2MessagePacket(localSequence, remoteSequence, appSequence, messageData);
             return _sendMessageDelegate(message, linkedCts.Token);
-		}
-		private async Task beginInboundAsync(ITv2MessagePacket message, CancellationToken cancellationToken)
-		{
-            _timeoutCts.CancelAfter(_timeout);
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _timeoutCts.Token);
-				
-			remoteSequence = message.senderSequence;
-            //The following was working and im keeping this until I confirm the changes
-            //localSequence = (byte)session._localSequence; //message.receiverSequence;// session.AllocateNextLocalSequence();
-            localSequence = message.receiverSequence;
-            appSequence = message.appSequence;
-            //if (appSequence.HasValue)
-            //{
-            //    session.UpdateAppSequence(appSequence.Value);
-            //}
-            isCorrelated = inboundCorrelataion;
-			await InitializeInboundAsync(linkedCts.Token);
-		}
-
-		private async Task beginOutboundAsync(ITv2MessagePacket message, CancellationToken cancellationToken)
-		{
-            _timeoutCts.CancelAfter(_timeout);
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _timeoutCts.Token);
-				
-			localSequence = message.senderSequence;
-			remoteSequence = message.receiverSequence;
-            appSequence = message.appSequence;
-            isCorrelated = outboundCorrelataion;
-			await _sendMessageDelegate(message, linkedCts.Token);
-			await InitializeOutboundAsync(linkedCts.Token);
-		}
-
-        bool inboundCorrelataion(ITv2MessagePacket message) => message.senderSequence == remoteSequence && isCorrelatedMessage(message);
-        bool outboundCorrelataion(ITv2MessagePacket message) => message.receiverSequence == localSequence && isCorrelatedMessage(message);
-        protected virtual bool isCorrelatedMessage(ITv2MessagePacket message) => true;
+        }
+        protected abstract Task<bool> TryConsumeMessageAsync(ITv2MessagePacket message, CancellationToken cancellationToken);
+		protected abstract bool Pending { get; }
         protected abstract Task InitializeInboundAsync(CancellationToken cancellationToken);
 		protected abstract Task InitializeOutboundAsync(CancellationToken cancellationToken);
+        protected void SetResult(TransactionResult result) => _completionSource.SetResult(result);
+        bool inboundCorrelataion(ITv2MessagePacket message) => message.senderSequence == remoteSequence;
+        bool outboundCorrelataion(ITv2MessagePacket message) => message.receiverSequence == localSequence;
 
-		/// <summary>
-		/// Abort the transaction
-		/// </summary>
-		protected void Abort()
-		{
-			log.LogWarning("{TransactionType} aborted", GetType().Name);
-			_timeoutCts?.Cancel();
-			_timeoutCts?.Dispose();
-		}
-
-        // Explicit ITransaction interface implementations
-        bool ITransaction.CanContinue => CanContinue && !_timeoutCts.IsCancellationRequested;			
-		Task ITransaction.BeginInboundAsync(ITv2MessagePacket message, CancellationToken cancellationToken) 
-			=> beginInboundAsync(message, cancellationToken);			
-		Task ITransaction.BeginOutboundAsync(ITv2MessagePacket message, CancellationToken cancellationToken) 
-			=> beginOutboundAsync(message, cancellationToken);			
-		async Task<bool> ITransaction.TryContinueAsync(ITv2MessagePacket message, CancellationToken cancellationToken)
-		{
-			if (isCorrelated.Invoke(message) && ((ITransaction)this).CanContinue)
-			{
-				remoteSequence = message.senderSequence;
-				await ContinueAsync(message, cancellationToken);
-				return true;
-			}
-			return false;
-		}
-		void ITransaction.Abort() => Abort();
-	}
+        /// <summary>
+        /// Abort the transaction
+        /// </summary>
+        public void Abort()
+        {
+            log.LogWarning("{TransactionType} aborted", GetType().Name);
+            _timeoutCts.Cancel();
+        }
+        public void Dispose()
+        {
+            _timeoutCts.Dispose();            
+        }
+    }
 }

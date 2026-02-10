@@ -43,7 +43,7 @@ namespace DSC.TLink.ITv2.Transactions
         /// <summary>
         /// Create a transaction for the given message data using the registered attribute factory.
         /// </summary>
-        public static ITransaction CreateTransaction(IMessageData messageData, ILogger log, Func<ITv2MessagePacket, CancellationToken, Task> sendMessageDelegate)
+        public static Transaction CreateTransaction(IMessageData messageData, ILogger log, Func<ITv2MessagePacket, CancellationToken, Task> sendMessageDelegate)
         {
             if (messageData == null) throw new ArgumentNullException(nameof(messageData));
             if (log == null) throw new ArgumentNullException(nameof(log));
@@ -56,13 +56,14 @@ namespace DSC.TLink.ITv2.Transactions
                 return transactionCreator.CreateTransaction(log, sendMessageDelegate);
             }
 
-            // Default fallback
+            // Default fallback.  At some point this should probably throw an error but at the time this was written
+            //not all messages and transactions were defined, so, this was installed to assist with development.
             log.LogWarning("No transaction attribute found for {MessageType}, using CommandResponseTransaction", messageType.Name);
             return new SimpleAckTransaction(log, sendMessageDelegate);
         }
     }
     internal interface ICreateTransaction
     {
-        ITransaction CreateTransaction(ILogger log, Func<ITv2MessagePacket, CancellationToken, Task> sendMessageDelegate);
+        Transaction CreateTransaction(ILogger log, Func<ITv2MessagePacket, CancellationToken, Task> sendMessageDelegate);
     }
 }
