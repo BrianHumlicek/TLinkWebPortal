@@ -21,17 +21,21 @@ using Microsoft.Extensions.Logging;
 
 namespace DSC.TLink.ITv2.Transactions
 {
-    /// <summary>
-    /// Transaction pattern for CommandRequestMessage.
-    /// 
-    /// Protocol Flow (Outbound only):
-    /// 1. Send CommandRequestMessage with CommandRequest enum specifying desired data
-    /// 2. Panel responds with typed message matching the requested command
-    /// 3. Transaction complete
-    /// 
-    /// Example: Request zone status → Receive ZoneStatusMessage → Done
-    /// </summary>
-    internal class CommandRequestTransaction : Transaction
+	[AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+	internal sealed class CommandRequestTransactionAttribute : TransactionAttribute<CommandRequestTransaction>
+	{
+	}
+	/// <summary>
+	/// Transaction pattern for CommandRequestMessage.
+	///  
+	/// Protocol Flow (Outbound only):
+	/// 1. Send CommandRequestMessage with CommandRequest enum specifying desired data
+	/// 2. Panel responds with typed message matching the requested command
+	/// 3. Transaction complete
+	/// 
+	/// Example: Request zone status → Receive ZoneStatusMessage → Done
+	/// </summary>
+	internal class CommandRequestTransaction : Transaction
     {
         private State _state;
         private ITv2Command _expectedResponseCommand;
@@ -50,7 +54,7 @@ namespace DSC.TLink.ITv2.Transactions
             _ => false
         };
 
-        protected override async Task InitializeInboundAsync(CancellationToken cancellationToken)
+        protected override Task InitializeInboundAsync(CancellationToken cancellationToken)
         {
             // Panel doesn't send us CommandRequestMessages - this is outbound only
             log.LogError("CommandRequestTransaction does not support inbound initialization");
@@ -58,7 +62,7 @@ namespace DSC.TLink.ITv2.Transactions
             throw new NotSupportedException("CommandRequestTransaction is outbound only - panel does not request data from clients");
         }
 
-        protected override async Task InitializeOutboundAsync(CancellationToken cancellationToken)
+        protected override Task InitializeOutboundAsync(CancellationToken cancellationToken)
         {
             if (InitiatingMessage is CommandRequestMessage commandRequest)
             {
@@ -66,36 +70,33 @@ namespace DSC.TLink.ITv2.Transactions
             }
             else
             {
-                               log.LogError("CommandRequestTransaction requires CommandRequestMessage as initiating message, but got {MessageType}",
-                    InitiatingMessage.GetType().Name);
+                log.LogError("CommandRequestTransaction requires CommandRequestMessage as initiating message, but got {MessageType}", InitiatingMessage.GetType().Name);
                 Abort();
                 throw new InvalidOperationException($"CommandRequestTransaction requires CommandRequestMessage as initiating message, but got {InitiatingMessage.GetType().Name}");
             }
-            log.LogTrace("CommandRequest transaction: sent request for {Command}, awaiting response",
-                    InitiatingMessage.Command);
-            
+            log.LogTrace("CommandRequest transaction: sent request for {Command}, awaiting response", InitiatingMessage.Command);
             _state = State.AwaitingResponse;
-            await Task.CompletedTask;
+            return Task.CompletedTask;
         }
 
-        protected override async Task<bool> TryConsumeMessageAsync(ITv2MessagePacket messagePacket, CancellationToken cancellationToken)
+        protected override async Task<bool> TryProcessMessageAsync(ITv2MessagePacket messagePacket, CancellationToken cancellationToken)
         {
             switch (_state)
             {
                 case State.AwaitingResponse:
                     // Validate that the response matches the requested command
-                    var responseCommand = MessageFactory.GetCommand(messagePacket.messageData);
+                    var responseCommand = messagePacket.messageData.Command;
                     
-                    if (responseCommand != _expectedResponseCommand)
+					if (messagePacket.messageData is CommandError commandError)
+					{
+						log.LogWarning("Error in CommandRequest {NackCode}", commandError.NackCode);
+						SetResult(new TransactionResult($"Command error {commandError.NackCode}"));
+						Abort();
+						return true;
+					}
+                    else if (responseCommand != _expectedResponseCommand)
                     {
-                        log.LogError("CommandRequest transaction: expected response for command {Expected}, but received {Actual}",
-                            _expectedResponseCommand, responseCommand);
-                        
-                        SetResult(new TransactionResult(
-                            $"Unexpected response: expected {_expectedResponseCommand}, got {responseCommand}"));
-                        
-                        _state = State.Complete;
-                        return true;
+                        return HandleUnexpectedResponse(messagePacket);
                     }
                     
                     // Transaction complete with the response data

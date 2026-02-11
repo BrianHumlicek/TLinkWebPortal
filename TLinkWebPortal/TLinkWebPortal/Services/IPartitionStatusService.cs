@@ -25,6 +25,21 @@ namespace TLinkWebPortal.Services
         IReadOnlyDictionary<byte, ZoneState> GetZones(string sessionId, byte partitionNumber);
 
         /// <summary>
+        /// Update the state of a specific partition
+        /// </summary>
+        void UpdatePartition(string sessionId, PartitionState partition);
+
+        /// <summary>
+        /// Update the state of a specific zone
+        /// </summary>
+        void UpdateZone(string sessionId, byte partitionNumber, ZoneState zone);
+
+        /// <summary>
+        /// Request an asynchronous update of the zone status
+        /// </summary>
+        Task<bool> RequestZoneStatusUpdateAsync(string sessionId, byte partitionNumber, CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Event raised when partition state changes
         /// </summary>
         event EventHandler<PartitionStateChangedEventArgs>? PartitionStateChanged;

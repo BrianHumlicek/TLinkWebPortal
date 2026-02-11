@@ -23,7 +23,6 @@ using DSC.TLink.ITv2;
 using DSC.TLink.ITv2.MediatR;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
-using System.Reflection;
 
 namespace DSC.TLink
 {
@@ -33,27 +32,17 @@ namespace DSC.TLink
 		/// Registers ITv2 services and configures Kestrel for panel connections.
 		/// </summary>
 		/// <param name="builder">The web application builder</param>
-		/// <param name="additionalAssemblies">Additional assemblies to scan for MediatR handlers (e.g., web project assembly)</param>
-		public static WebApplicationBuilder UseITv2(
-			this WebApplicationBuilder builder, 
-			params Assembly[] additionalAssemblies)
+		public static WebApplicationBuilder UseITv2(this WebApplicationBuilder builder)
 		{
             // Configuration
             builder.Services.Configure<ITv2Settings>(builder.Configuration.GetSection(ITv2Settings.SectionName));
             builder.Services.AddSingleton(sp => 
                 sp.GetRequiredService<IOptions<ITv2Settings>>().Value);
 
-            // ✅ MediatR - Register TLink assembly + any additional assemblies passed in
+            // MediatR - Register TLink assembly only
             builder.Services.AddMediatR(configuration =>
             {
-                // Always scan the TLink assembly
                 configuration.RegisterServicesFromAssembly(typeof(ITv2Session).Assembly);
-                
-                // Scan any additional assemblies (e.g., web project)
-                foreach (var assembly in additionalAssemblies)
-                {
-                    configuration.RegisterServicesFromAssembly(assembly);
-                }
             });
 
             // Singleton services (shared across all connections)
@@ -77,8 +66,8 @@ namespace DSC.TLink
 				});
                 
                 // Re-add the default web UI port (since ConfigureKestrel disables defaults)
-                options.ListenLocalhost(5181); // HTTP
-                options.ListenLocalhost(7013, listenOptions => listenOptions.UseHttps()); // HTTPS
+                options.ListenAnyIP(5181); // HTTP
+                options.ListenAnyIP(7013, listenOptions => listenOptions.UseHttps()); // HTTPS
 			});
 
             builder.Services.AddLogging();

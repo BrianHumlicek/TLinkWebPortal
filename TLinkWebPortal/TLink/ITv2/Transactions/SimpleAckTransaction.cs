@@ -20,6 +20,10 @@ using Microsoft.Extensions.Logging;
 
 namespace DSC.TLink.ITv2.Transactions
 {
+	[AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+	internal sealed class SimpleAckTransactionAttribute : TransactionAttribute<SimpleAckTransaction>
+	{
+	}
 	/// <summary>
 	/// Simple ITv2 transaction pattern with just message + ack.
 	/// 
@@ -71,7 +75,7 @@ namespace DSC.TLink.ITv2.Transactions
 			await Task.CompletedTask; // Nothing more to send yet
 		}
 
-		protected override async Task<bool> TryConsumeMessageAsync(ITv2MessagePacket message, CancellationToken cancellationToken)
+		protected override async Task<bool> TryProcessMessageAsync(ITv2MessagePacket message, CancellationToken cancellationToken)
 		{
 			switch (_state)
 			{
@@ -92,11 +96,7 @@ namespace DSC.TLink.ITv2.Transactions
                         SetResult(new TransactionResult(errorMessage.NackCode.ToString()));
                         break;
                     }
-                    log.LogError("Expected Ack, got {Type}", message.messageData.GetType().Name);
-                    log.LogMessageDebug("Received", message.messageData);
-                    SetResult(new TransactionResult("Invalid response"));
-                    Abort();
-                    break;
+                    return HandleUnexpectedResponse(message);
                 default:
 					log.LogWarning("Unexpected message in state {State}", _state);
 					break;

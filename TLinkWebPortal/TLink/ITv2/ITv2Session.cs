@@ -219,7 +219,7 @@ namespace DSC.TLink.ITv2
 
                 var newTransaction = CreateTransaction(messagePacket.messageData);
                 
-                _ = newTransaction.TransactionResult.ContinueWith(continuation, cancellation);
+                _ = newTransaction.Result.ContinueWith(continuation, cancellation);
 
                 _log.LogDebug("New {TransactionType} started: {MessageType}", newTransaction.GetType().Name, messagePacket.messageData.GetType().Name);
                 await newTransaction.BeginInboundAsync(messagePacket, cancellation);
@@ -312,7 +312,7 @@ namespace DSC.TLink.ITv2
                 _transactionSemaphore.Release();
             }
             //return await must happen outside of semaphore lock to prevent deadlocks.
-            return await newTransaction.TransactionResult;
+            return await newTransaction.Result;
         }
 
         /// <summary>

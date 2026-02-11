@@ -32,11 +32,16 @@ namespace TLinkWebPortal
                 .AddInteractiveServerComponents()
                 .AddInteractiveWebAssemblyComponents();
 
-            // ✅ Register TLink services and pass this assembly for MediatR scanning
-            builder.UseITv2(typeof(Program).Assembly);
-
-            // Register PartitionStatusService as Singleton
+            // Application services (singletons shared across handlers and UI)
             builder.Services.AddSingleton<IPartitionStatusService, PartitionStatusService>();
+            builder.Services.AddSingleton<ISessionMonitor, SessionMonitor>();
+
+            // TLink services + MediatR (TLink handlers only)
+            builder.UseITv2();
+
+            // Register web project MediatR handlers (additive to TLink's registration)
+            builder.Services.AddMediatR(cfg =>
+                cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
 
             // Add MudBlazor services
             builder.Services.AddMudServices();

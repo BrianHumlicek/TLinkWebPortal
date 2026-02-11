@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using MediatR;
 using Microsoft.Extensions.Logging;
 
 namespace DSC.TLink.ITv2.MediatR
@@ -6,7 +7,7 @@ namespace DSC.TLink.ITv2.MediatR
     /// <summary>
     /// Manages active ITv2Session instances and routes commands to the correct session.
     /// </summary>
-    public  interface IITv2SessionManager  // ✅ Changed from internal to public
+    public interface IITv2SessionManager
     {
         internal void RegisterSession(string sessionId, ITv2Session session);
         internal void UnregisterSession(string sessionId);
@@ -17,10 +18,12 @@ namespace DSC.TLink.ITv2.MediatR
     internal class ITv2SessionManager : IITv2SessionManager
     {
         private readonly ConcurrentDictionary<string, ITv2Session> _sessions = new();
+        private readonly IMediator _mediator;
         private readonly ILogger<ITv2SessionManager> _logger;
 
-        public ITv2SessionManager(ILogger<ITv2SessionManager> logger)
+        public ITv2SessionManager(IMediator mediator, ILogger<ITv2SessionManager> logger)
         {
+            _mediator = mediator;
             _logger = logger;
         }
 
@@ -30,6 +33,7 @@ namespace DSC.TLink.ITv2.MediatR
             {
                 _logger.LogInformation("Registered session {SessionId}. Active sessions: {Count}",
                     sessionId, _sessions.Count);
+                PublishLifecycleNotification(new SessionConnectedNotification(sessionId));
             }
             else
             {
@@ -43,6 +47,7 @@ namespace DSC.TLink.ITv2.MediatR
             {
                 _logger.LogInformation("Unregistered session {SessionId}. Active sessions: {Count}",
                     sessionId, _sessions.Count);
+                PublishLifecycleNotification(new SessionDisconnectedNotification(sessionId));
             }
         }
 
@@ -54,6 +59,21 @@ namespace DSC.TLink.ITv2.MediatR
         public IEnumerable<string> GetActiveSessions()
         {
             return _sessions.Keys.ToList();
+        }
+
+        /// <summary>
+        /// Fire-and-forget publish, consistent with SessionMediator.PublishInboundMessage pattern.
+        /// </summary>
+        private async void PublishLifecycleNotification(INotification notification)
+        {
+            try
+            {
+                await _mediator.Publish(notification);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error publishing session lifecycle notification");
+            }
         }
     }
 }

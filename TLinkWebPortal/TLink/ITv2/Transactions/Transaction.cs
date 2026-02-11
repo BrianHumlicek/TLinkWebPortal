@@ -30,7 +30,7 @@ namespace DSC.TLink.ITv2.Transactions
 
         private byte localSequence, remoteSequence;
         private byte? appSequence;
-        private IMessageData _initiatingMessage;
+        private IMessageData? _initiatingMessage;
         private Func<ITv2MessagePacket, bool> isCorrelated = new Func<ITv2MessagePacket, bool>(message => false);
 
         // Timeout infrastructure
@@ -78,14 +78,14 @@ namespace DSC.TLink.ITv2.Transactions
                 //When sending an outbound transaction, I sync the remote sequence on the first (and subsequent) reply.
                 //This mimicks the behaviour I see from the TL280, though it doesn't seem to impact functionality.
                 remoteSequence = message.senderSequence;
-                return await TryConsumeMessageAsync(message, cancellationToken);
+                return await TryProcessMessageAsync(message, cancellationToken);
             }
             return false;
         }
         public bool CanContinue => Pending && !_timeoutCts.IsCancellationRequested;
-        public Task<TransactionResult> TransactionResult => _completionSource.Task;
+        public Task<TransactionResult> Result => _completionSource.Task;
         protected ILogger log => _log;
-        protected IMessageData InitiatingMessage => _initiatingMessage;
+        protected IMessageData InitiatingMessage => _initiatingMessage ?? throw new InvalidOperationException($"Cannot access {nameof(InitiatingMessage)} before sending or receiving");
         protected Task SendMessageAsync(IMessageData messageData, CancellationToken cancellationToken)
         {
             // Link with timeout cancellation
@@ -93,20 +93,27 @@ namespace DSC.TLink.ITv2.Transactions
             var message = new ITv2MessagePacket(localSequence, remoteSequence, appSequence, messageData);
             return _sendMessageDelegate(message, linkedCts.Token);
         }
-        protected abstract Task<bool> TryConsumeMessageAsync(ITv2MessagePacket message, CancellationToken cancellationToken);
+        protected abstract Task<bool> TryProcessMessageAsync(ITv2MessagePacket message, CancellationToken cancellationToken);
 		protected abstract bool Pending { get; }
         protected abstract Task InitializeInboundAsync(CancellationToken cancellationToken);
 		protected abstract Task InitializeOutboundAsync(CancellationToken cancellationToken);
-        protected void SetResult(TransactionResult result) => _completionSource.SetResult(result);
+        protected void SetResult(TransactionResult result) => _completionSource.TrySetResult(result);
         bool inboundCorrelataion(ITv2MessagePacket message) => message.senderSequence == remoteSequence;
         bool outboundCorrelataion(ITv2MessagePacket message) => message.receiverSequence == localSequence;
 
+        protected bool HandleUnexpectedResponse(ITv2MessagePacket message)
+        {
+            log.LogWarning("Received unexpected message during {TransactionType}: {MessageType}", GetType().Name, message.messageData.GetType().Name);
+            Abort("Unexpected response");
+            return false;
+        }
         /// <summary>
         /// Abort the transaction
         /// </summary>
-        public void Abort()
+        public void Abort(string resultMessage = "Transaction aborted")
         {
             log.LogWarning("{TransactionType} aborted", GetType().Name);
+			_completionSource.SetResult(new TransactionResult(resultMessage));
             _timeoutCts.Cancel();
         }
         public void Dispose()

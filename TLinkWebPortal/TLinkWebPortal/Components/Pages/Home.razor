@@ -4,6 +4,8 @@
 @using DSC.TLink.ITv2.MediatR
 @inject IPartitionStatusService PartitionService
 @inject IITv2SessionManager SessionManager
+@inject ISessionMonitor SessionMonitor
+@inject NavigationManager Navigation
 @implements IDisposable
 
 <PageTitle>Security Panel Status</PageTitle>
@@ -45,10 +47,7 @@
                             <MudCard Elevation="4" Class="mb-4">
                                 <MudCardHeader>
                                     <CardHeaderContent>
-                                        <MudText Typo="Typo.h5">
-                                            <MudIcon Icon="@Icons.Material.Filled.Shield" Class="mr-2" />
-                                            Partition @partitionNumber
-                                        </MudText>
+                                        <MudText Typo="Typo.h5">Partition @partitionNumber</MudText>
                                     </CardHeaderContent>
                                     <CardHeaderActions>
                                         <MudChip T="string" 
@@ -59,25 +58,7 @@
                                     </CardHeaderActions>
                                 </MudCardHeader>
                                 <MudCardContent>
-                                    <MudStack Spacing="2">
-                                        <MudText>
-                                            <strong>Status:</strong> 
-                                            @(partition.IsReady ? "Ready to Arm" : "Not Ready")
-                                        </MudText>
-                                        <MudText>
-                                            <strong>Armed:</strong> 
-                                            @(partition.IsArmed ? "Yes" : "No")
-                                        </MudText>
-                                        <MudText Typo="Typo.caption">
-                                            Last Updated: @partition.LastUpdated.ToLocalTime().ToString("HH:mm:ss")
-                                        </MudText>
-
-                                        <MudDivider Class="my-2" />
-
-                                        <MudText Typo="Typo.h6" Class="mt-2">
-                                            Zones (@partition.Zones.Count)
-                                        </MudText>
-
+                                    <MudStack>
                                         @if (!partition.Zones.Any())
                                         {
                                             <MudText Typo="Typo.caption" Color="Color.Secondary">
@@ -125,64 +106,38 @@
 @code {
     private string selectedSessionId = "";
     private List<string> activeSessions = new();
-    private System.Threading.Timer? refreshTimer;
 
     protected override void OnInitialized()
     {
-        // Get active sessions
+        // Load any sessions that connected before the page loaded
         RefreshSessions();
 
-        // Subscribe to state change events
-        PartitionService.PartitionStateChanged += OnPartitionStateChanged;
-        PartitionService.ZoneStateChanged += OnZoneStateChanged;
+        // All event-driven — no timers
+        SessionMonitor.SessionsChanged += OnSessionsChanged;
+        PartitionService.PartitionStateChanged += OnStateChanged;
+        PartitionService.ZoneStateChanged += OnStateChanged;
+    }
 
-        // Refresh session list periodically
-        refreshTimer = new System.Threading.Timer(_ =>
+    private void OnSessionsChanged()
+    {
+        InvokeAsync(() =>
         {
-            InvokeAsync(() =>
-            {
-                RefreshSessions();
-                StateHasChanged();
-            });
-        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+            RefreshSessions();
+            StateHasChanged();
+        });
+    }
+
+    private void OnStateChanged(object? sender, EventArgs e)
+    {
+        InvokeAsync(StateHasChanged);
     }
 
     private void RefreshSessions()
     {
-        var sessions = SessionManager.GetActiveSessions().ToList();
+        activeSessions = SessionManager.GetActiveSessions().ToList();
         
-        // Update list if changed
-        if (!sessions.SequenceEqual(activeSessions))
-        {
-            activeSessions = sessions;
-            
-            // Auto-select first session if none selected
-            if (string.IsNullOrEmpty(selectedSessionId) && activeSessions.Any())
-            {
-                selectedSessionId = activeSessions.First();
-            }
-            // Clear selection if selected session disconnected
-            else if (!activeSessions.Contains(selectedSessionId))
-            {
-                selectedSessionId = activeSessions.FirstOrDefault() ?? "";
-            }
-        }
-    }
-
-    private void OnPartitionStateChanged(object? sender, PartitionStateChangedEventArgs e)
-    {
-        if (e.SessionId == selectedSessionId)
-        {
-            InvokeAsync(StateHasChanged);
-        }
-    }
-
-    private void OnZoneStateChanged(object? sender, ZoneStateChangedEventArgs e)
-    {
-        if (e.SessionId == selectedSessionId)
-        {
-            InvokeAsync(StateHasChanged);
-        }
+        if (string.IsNullOrEmpty(selectedSessionId) || !activeSessions.Contains(selectedSessionId))
+            selectedSessionId = activeSessions.FirstOrDefault() ?? "";
     }
 
     private Color GetZoneColor(ZoneState zone)
@@ -223,14 +178,13 @@
 
     private void ShowZoneDetails(byte partitionNumber)
     {
-        // TODO: Navigate to detailed zone view or show dialog
-        Console.WriteLine($"Show details for partition {partitionNumber}");
+        Navigation.NavigateTo($"/zones/{selectedSessionId}/{partitionNumber}");
     }
 
     public void Dispose()
     {
-        PartitionService.PartitionStateChanged -= OnPartitionStateChanged;
-        PartitionService.ZoneStateChanged -= OnZoneStateChanged;
-        refreshTimer?.Dispose();
+        SessionMonitor.SessionsChanged -= OnSessionsChanged;
+        PartitionService.PartitionStateChanged -= OnStateChanged;
+        PartitionService.ZoneStateChanged -= OnStateChanged;
     }
 }

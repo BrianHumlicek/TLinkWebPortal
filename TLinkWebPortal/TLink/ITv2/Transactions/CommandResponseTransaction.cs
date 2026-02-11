@@ -4,6 +4,9 @@ using Microsoft.Extensions.Logging;
 
 namespace DSC.TLink.ITv2.Transactions
 {
+	[AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+	internal sealed class CommandResponseTransactionAttribute : TransactionAttribute<CommandResponseTransaction>
+	{ }
 	/// <summary>
 	/// Standard ITv2 command-response transaction pattern.
 	/// 
@@ -37,62 +40,63 @@ namespace DSC.TLink.ITv2.Transactions
         protected override async Task InitializeInboundAsync(CancellationToken cancellationToken)
 		{
 			// Inbound: Remote sent us a command, send CommandResponse back
-			_state = State.SendingCommandResponse;
 			await SendMessageAsync(new CommandResponse { ResponseCode = CommandResponseCode.Success }, cancellationToken);
 			_state = State.AwaitingSimpleAck;
 		}
 
-		protected override async Task InitializeOutboundAsync(CancellationToken cancellationToken)
+		protected override Task InitializeOutboundAsync(CancellationToken cancellationToken)
 		{
 			// Outbound: We sent a command, wait for CommandResponse
 			_state = State.AwaitingCommandResponse;
-			await Task.CompletedTask; // Nothing to send yet
+			return Task.CompletedTask; // Nothing to send yet
 		}
 
-		protected override async Task<bool> TryConsumeMessageAsync(ITv2MessagePacket message, CancellationToken cancellationToken)
+		protected override async Task<bool> TryProcessMessageAsync(ITv2MessagePacket message, CancellationToken cancellationToken)
 		{
 			switch (_state)
 			{
 				case State.AwaitingCommandResponse:
 					// We sent a command, expecting CommandResponse back
-					if (message.messageData is not CommandResponse response)
+					if (message.messageData is CommandResponse commandResponse)
 					{
-						log.LogWarning("Expected CommandResponse, got {Type}", message.messageData.GetType().Name);
-						Abort();
-						return true;
+						if (commandResponse.ResponseCode != CommandResponseCode.Success)
+						{
+							log.LogWarning("Command rejected with code {Code}", commandResponse.ResponseCode);
+							SetResult(new TransactionResult($"CommandResponse error {commandResponse.ResponseCode}"));
+							//Maybe I should abort here?
+						}
 					}
-
-					_responseCode = response.ResponseCode;
-						
-					if (response.ResponseCode != CommandResponseCode.Success)
+					else if (message.messageData is CommandError commandError)
 					{
-						log.LogWarning("Command rejected with code {Code}", response.ResponseCode);
-						// Still complete the protocol by sending ack
+						log.LogWarning("Command error in transaction {commandError}", commandError.NackCode);
+						SetResult(new TransactionResult($"Nack {commandError.NackCode}"));
+						//Maybe I should abort here?
 					}
+					else
+					{
+                        return HandleUnexpectedResponse(message);
+                    }
 
 					// Send SimpleAck to complete transaction
-					_state = State.SendingSimpleAck;
 					await SendMessageAsync(new SimpleAck(), cancellationToken);
 					_state = State.Complete;
-					log.LogDebug("CommandResponse transaction completed with code {Code}", _responseCode);
+					log.LogDebug("CommandResponse transaction completed");
+					SetResult(new TransactionResult());
 					break;
 
 				case State.AwaitingSimpleAck:
 					// We sent CommandResponse, expecting SimpleAck back
 					if (message.messageData is not SimpleAck)
 					{
-						log.LogWarning("Expected SimpleAck, got {Type}", message.messageData.GetType().Name);
-						Abort();
-						return true;
-					}
-
+                        return HandleUnexpectedResponse(message);
+                    }
 					_state = State.Complete;
+					SetResult(new TransactionResult(InitiatingMessage));
 					log.LogDebug("CommandResponse transaction completed");
 					break;
 
 				default:
-					log.LogWarning("Unexpected message in state {State}", _state);
-					break;
+					throw new InvalidOperationException($"Invalid state {_state} in {nameof(TryProcessMessageAsync)}");
 			}
             return true;
         }
@@ -105,10 +109,8 @@ namespace DSC.TLink.ITv2.Transactions
 		private enum State
 		{
 			Initial,
-			SendingCommandResponse,      // Inbound: sending our response
 			AwaitingSimpleAck,           // Inbound: waiting for remote's ack
 			AwaitingCommandResponse,     // Outbound: waiting for remote's response
-			SendingSimpleAck,            // Outbound: sending our ack
 			Complete
 		}
 	}

@@ -4,18 +4,15 @@ using DSC.TLink.ITv2.Messages;
 using MediatR;
 using System.Collections.Concurrent;
 using TLinkWebPortal.Services.Models;
-using static DSC.TLink.ITv2.Messages.NotificationPartitionReadyStatus;
 using static DSC.TLink.ITv2.Messages.ModuleZoneStatus;
 
 namespace TLinkWebPortal.Services
 {
     /// <summary>
-    /// Maintains partition and zone status state by handling notifications
-    /// and requesting zone updates when partition status changes.
+    /// Maintains partition and zone status state.
+    /// State is updated by dedicated notification handlers.
     /// </summary>
-    public class PartitionStatusService : IPartitionStatusService,
-        INotificationHandler<SessionNotification<NotificationPartitionReadyStatus>>,
-        INotificationHandler<SessionNotification<NotificationLifestyleZoneStatus>>
+    public class PartitionStatusService : IPartitionStatusService
     {
         private readonly IMediator _mediator;
         private readonly ILogger<PartitionStatusService> _logger;
@@ -34,7 +31,7 @@ namespace TLinkWebPortal.Services
             _logger = logger;
         }
 
-        #region Public API
+        #region Read
 
         public PartitionState? GetPartition(string sessionId, byte partitionNumber)
         {
@@ -67,151 +64,62 @@ namespace TLinkWebPortal.Services
 
         #endregion
 
-        #region Notification Handlers
+        #region Write
 
-        /// <summary>
-        /// Handles partition status notifications and requests zone status updates
-        /// </summary>
-        public async Task Handle(
-            SessionNotification<NotificationPartitionReadyStatus> notification,
-            CancellationToken cancellationToken)
+        public void UpdatePartition(string sessionId, PartitionState partition)
         {
-            try
+            var sessionPartitions = _state.GetOrAdd(sessionId, _ => new ConcurrentDictionary<byte, PartitionState>());
+            sessionPartitions[partition.PartitionNumber] = partition;
+
+            PartitionStateChanged?.Invoke(this, new PartitionStateChangedEventArgs
             {
-                var msg = notification.MessageData;
-                var sessionId = notification.SessionId;
-
-                _logger.LogInformation(
-                    "Partition {Partition} status: {Status} (Session: {SessionId})",
-                    msg.PartitionNumber, msg.Status, sessionId);
-
-                // Update partition state
-                var partition = GetOrCreatePartition(sessionId, msg.PartitionNumber);
-                
-                // Interpret the ready status enum
-                partition.IsReady = msg.Status == PartitionReadyStatusEnum.ReadyToArm || 
-                                   msg.Status == PartitionReadyStatusEnum.ReadyToForceArm;
-                
-                // Store the arm mode based on status
-                partition.ArmMode = msg.Status switch
-                {
-                    PartitionReadyStatusEnum.ReadyToArm => "Ready",
-                    PartitionReadyStatusEnum.ReadyToForceArm => "Ready (Force)",
-                    PartitionReadyStatusEnum.NotReadyToArm => "Not Ready",
-                    _ => "Unknown"
-                };
-                
-                partition.LastUpdated = notification.ReceivedAt;
-
-                // Raise event for UI
-                PartitionStateChanged?.Invoke(this, new PartitionStateChangedEventArgs
-                {
-                    SessionId = sessionId,
-                    Partition = partition
-                });
-
-                // Request zone status update for this partition
-                await RequestZoneStatusUpdate(sessionId, msg.PartitionNumber, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error handling partition status notification");
-            }
+                SessionId = sessionId,
+                Partition = partition
+            });
         }
 
-        /// <summary>
-        /// Handles single zone lifestyle notifications (real-time zone changes)
-        /// </summary>
-        public async Task Handle(
-            SessionNotification<NotificationLifestyleZoneStatus> notification,
-            CancellationToken cancellationToken)
+        public void UpdateZone(string sessionId, byte partitionNumber, ZoneState zone)
         {
-            try
+            var sessionPartitions = _state.GetOrAdd(sessionId, _ => new ConcurrentDictionary<byte, PartitionState>());
+            var partition = sessionPartitions.GetOrAdd(partitionNumber, _ => new PartitionState { PartitionNumber = partitionNumber });
+            partition.Zones[zone.ZoneNumber] = zone;
+
+            ZoneStateChanged?.Invoke(this, new ZoneStateChangedEventArgs
             {
-                var msg = notification.MessageData;
-                var sessionId = notification.SessionId;
-
-                _logger.LogDebug(
-                    "Received lifestyle zone status for zone {Zone}: {Status} (Session: {SessionId})",
-                    msg.ZoneNumber, msg.Status, sessionId);
-
-                // Determine which partition this zone belongs to
-                byte partitionNumber = DeterminePartitionForZone(msg.ZoneNumber);
-
-                var partition = GetOrCreatePartition(sessionId, partitionNumber);
-                var zone = GetOrCreateZone(partition, msg.ZoneNumber);
-
-                // Update zone state based on lifestyle status
-                zone.IsOpen = msg.Status == NotificationLifestyleZoneStatus.LifeStyleZoneStatusCode.Open;
-                zone.LastUpdated = notification.ReceivedAt;
-
-                _logger.LogDebug(
-                    "Zone {Zone} is now {Status} (Partition: {Partition}, Session: {SessionId})",
-                    zone.ZoneNumber, zone.IsOpen ? "OPEN" : "CLOSED", partitionNumber, sessionId);
-
-                // Raise event for UI
-                ZoneStateChanged?.Invoke(this, new ZoneStateChangedEventArgs
-                {
-                    SessionId = sessionId,
-                    PartitionNumber = partitionNumber,
-                    Zone = zone
-                });
-
-                await Task.CompletedTask;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error handling lifestyle zone status notification");
-            }
+                SessionId = sessionId,
+                PartitionNumber = partitionNumber,
+                Zone = zone
+            });
         }
 
         #endregion
 
-        #region Private Helpers
+        #region Commands
 
-        private PartitionState GetOrCreatePartition(string sessionId, byte partitionNumber)
-        {
-            var sessionPartitions = _state.GetOrAdd(sessionId, _ => new ConcurrentDictionary<byte, PartitionState>());
-            return sessionPartitions.GetOrAdd(partitionNumber, _ => new PartitionState
-            {
-                PartitionNumber = partitionNumber
-            });
-        }
-
-        private ZoneState GetOrCreateZone(PartitionState partition, byte zoneNumber)
-        {
-            if (!partition.Zones.TryGetValue(zoneNumber, out var zone))
-            {
-                zone = new ZoneState { ZoneNumber = zoneNumber };
-                partition.Zones[zoneNumber] = zone;
-            }
-            return zone;
-        }
-
-        private async Task RequestZoneStatusUpdate(string sessionId, byte partitionNumber, CancellationToken cancellationToken)
+        /// <summary>
+        /// Manually request a zone status update from the panel.
+        /// Normally not needed as zone updates come automatically via NotificationLifestyleZoneStatus.
+        /// </summary>
+        public async Task<bool> RequestZoneStatusUpdateAsync(
+            string sessionId, 
+            byte partitionNumber, 
+            CancellationToken cancellationToken = default)
         {
             try
             {
-                _logger.LogDebug("Requesting zone status for partition {Partition} (Session: {SessionId})",
+                _logger.LogDebug("Manually requesting zone status for partition {Partition} (Session: {SessionId})",
                     partitionNumber, sessionId);
 
-                // Send CommandRequestMessage to get zone status
                 var command = new SessionCommand
                 {
                     SessionID = sessionId,
                     MessageData = new CommandRequestMessage
                     {
                         CommandRequest = ITv2Command.ModuleStatus_Zone_Status,
-                        Data = new byte[] 
-                        { 
-                            0x01, // Module/partition number
-                            0x01, // Start zone
-                            0x10  // Zone count (64 zones max)
-                        }
+                        Data = [0x01, 0x01, 0x07]
                     }
                 };
 
-                // Send command and wait for response
                 var response = await _mediator.Send(command, cancellationToken);
 
                 if (!response.Success)
@@ -219,69 +127,67 @@ namespace TLinkWebPortal.Services
                     _logger.LogWarning(
                         "Failed to request zone status for partition {Partition}: {Error}",
                         partitionNumber, response.ErrorMessage);
-                    return;
+                    return false;
                 }
 
-                // Process the ModuleZoneStatus response
                 if (response.MessageData is ModuleZoneStatus zoneStatus)
                 {
                     _logger.LogDebug(
                         "Received zone status response: Start={Start}, Count={Count} (Session: {SessionId})",
                         zoneStatus.ZoneStart, zoneStatus.ZoneCount, sessionId);
 
-                    // Process each zone's status byte
-                    for (int i = 0; i < zoneStatus.ZoneCount && i < zoneStatus.ZoneStatusBytes.Length; i++)
-                    {
-                        int zoneNumber = zoneStatus.ZoneStart + i;
-                        if (zoneNumber > 255) break; // Validate zone number
-
-                        var statusByte = (ZoneStatusEnum)zoneStatus.ZoneStatusBytes[i];
-                        
-                        // Determine partition for this zone
-                        byte zonePart = DeterminePartitionForZone((byte)zoneNumber);
-                        
-                        var partition = GetOrCreatePartition(sessionId, zonePart);
-                        var zone = GetOrCreateZone(partition, (byte)zoneNumber);
-
-                        // Update all zone properties from status flags
-                        zone.IsOpen = statusByte.HasFlag(ZoneStatusEnum.Open);
-                        zone.IsFaulted = statusByte.HasFlag(ZoneStatusEnum.Fault);
-                        zone.IsTampered = statusByte.HasFlag(ZoneStatusEnum.Tamper);
-                        zone.IsBypassed = statusByte.HasFlag(ZoneStatusEnum.Bypass);
-                        zone.LastUpdated = DateTime.UtcNow;
-
-                        _logger.LogTrace(
-                            "Zone {Zone}: Open={Open}, Fault={Fault}, Tamper={Tamper}, Bypass={Bypass}",
-                            zoneNumber, zone.IsOpen, zone.IsFaulted, zone.IsTampered, zone.IsBypassed);
-
-                        // Raise event for UI
-                        ZoneStateChanged?.Invoke(this, new ZoneStateChangedEventArgs
-                        {
-                            SessionId = sessionId,
-                            PartitionNumber = zonePart,
-                            Zone = zone
-                        });
-                    }
+                    ProcessModuleZoneStatus(sessionId, zoneStatus);
+                    return true;
                 }
-                else
-                {
-                    _logger.LogWarning(
-                        "Unexpected response type for zone status request: {Type}",
-                        response.MessageData?.GetType().Name ?? "null");
-                }
+
+                _logger.LogWarning(
+                    "Unexpected response type for zone status request: {Type}",
+                    response.MessageData?.GetType().Name ?? "null");
+                return false;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex,
                     "Error requesting zone status for partition {Partition}",
                     partitionNumber);
+                return false;
             }
         }
 
-        private byte DeterminePartitionForZone(byte zoneNumber)
+        #endregion
+
+        #region Private Helpers
+
+        private void ProcessModuleZoneStatus(string sessionId, ModuleZoneStatus zoneStatus)
         {
-            // Simple mapping: zones 1-64 = partition 1, 65-128 = partition 2, etc.
-            // Adjust based on your panel's zone/partition configuration
+            for (int i = 0; i < zoneStatus.ZoneCount && i < zoneStatus.ZoneStatusBytes.Length; i++)
+            {
+                int zoneNumber = zoneStatus.ZoneStart + i;
+                if (zoneNumber > 255) break;
+
+                var statusByte = (ZoneStatusEnum)zoneStatus.ZoneStatusBytes[i];
+                byte partitionNumber = DeterminePartitionForZone((byte)zoneNumber);
+
+                var zone = GetZone(sessionId, partitionNumber, (byte)zoneNumber) 
+                    ?? new ZoneState { ZoneNumber = (byte)zoneNumber };
+
+                zone.IsOpen = statusByte.HasFlag(ZoneStatusEnum.Open);
+                zone.IsFaulted = statusByte.HasFlag(ZoneStatusEnum.Fault);
+                zone.IsTampered = statusByte.HasFlag(ZoneStatusEnum.Tamper);
+                zone.IsBypassed = statusByte.HasFlag(ZoneStatusEnum.Bypass);
+                zone.LastUpdated = DateTime.UtcNow;
+
+                _logger.LogTrace(
+                    "Zone {Zone}: Open={Open}, Fault={Fault}, Tamper={Tamper}, Bypass={Bypass}",
+                    zoneNumber, zone.IsOpen, zone.IsFaulted, zone.IsTampered, zone.IsBypassed);
+
+                UpdateZone(sessionId, partitionNumber, zone);
+            }
+        }
+
+        private static byte DeterminePartitionForZone(byte zoneNumber)
+        {
+            // Zones 1-64 = partition 1, 65-128 = partition 2, etc.
             return (byte)Math.Max(1, (zoneNumber - 1) / 64 + 1);
         }
 
