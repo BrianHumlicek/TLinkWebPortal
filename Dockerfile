@@ -3,18 +3,18 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
 # Copy project files
-COPY ["TLinkWebPortal/TLinkWebPortal.csproj", "TLinkWebPortal/"]
-COPY ["TLinkWebPortal.Client/TLinkWebPortal.Client.csproj", "TLinkWebPortal.Client/"]
-COPY ["TLink/DSC.TLink.csproj", "TLink/"]
+COPY ["TLinkWebPortal/TLinkWebPortal/TLinkWebPortal.csproj", "TLinkWebPortal/TLinkWebPortal/"]
+COPY ["TLinkWebPortal/TLinkWebPortal.Client/TLinkWebPortal.Client.csproj", "TLinkWebPortal/TLinkWebPortal.Client/"]
+COPY ["TLinkWebPortal/TLink/DSC.TLink.csproj", "TLinkWebPortal/TLink/"]
 
 # Restore dependencies
-RUN dotnet restore "TLinkWebPortal/TLinkWebPortal.csproj"
+RUN dotnet restore "TLinkWebPortal/TLinkWebPortal/TLinkWebPortal.csproj"
 
 # Copy all source code
 COPY . .
 
 # Build and publish
-WORKDIR "/src/TLinkWebPortal"
+WORKDIR "/src/TLinkWebPortal/TLinkWebPortal"
 RUN dotnet publish "TLinkWebPortal.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
 # Runtime stage
