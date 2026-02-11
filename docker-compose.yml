@@ -6,11 +6,11 @@ services:
     container_name: tlinkwebportal
     ports:
       - "5181:8080"
-      - "7013:8443"
       - "3072:3072"
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - ASPNETCORE_URLS=http://+:8080;https://+:8443
+      - ASPNETCORE_URLS=http://+:8080
+      - EnableHttps=false
     volumes:
       - ./userSettings.json:/app/userSettings.json
     restart: unless-stopped

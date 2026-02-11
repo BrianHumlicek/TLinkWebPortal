@@ -65,9 +65,18 @@ namespace DSC.TLink
 					listenOptions.UseConnectionHandler<ITv2ConnectionHandler>();
 				});
                 
-                // Re-add the default web UI port (since ConfigureKestrel disables defaults)
-                options.ListenAnyIP(5181); // HTTP
-                options.ListenAnyIP(7013, listenOptions => listenOptions.UseHttps()); // HTTPS
+                // Web UI ports - use environment variables if set, otherwise defaults
+                var httpPort = context.Configuration.GetValue("HttpPort", 8080);
+                var httpsPort = context.Configuration.GetValue("HttpsPort", 8443);
+                var enableHttps = context.Configuration.GetValue("EnableHttps", false);
+                
+                options.ListenAnyIP(httpPort);
+                
+                // Only configure HTTPS if explicitly enabled (for production with proper certs)
+                if (enableHttps)
+                {
+                    options.ListenAnyIP(httpsPort, listenOptions => listenOptions.UseHttps());
+                }
 			});
 
             builder.Services.AddLogging();
