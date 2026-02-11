@@ -5,7 +5,7 @@ services:
     image: ghcr.io/brianhumlicek/tlinkwebportal:latest
     container_name: tlinkwebportal
     ports:
-      - "5181:8080"
+      - "8080:5181"
       - "3072:3072"
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
