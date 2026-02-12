@@ -148,6 +148,7 @@ namespace TLinkWebPortal.Services.Settings
 
         private bool IsPasswordOrSensitive(string propertyName)
         {
+            return false;   //I dont want password/sensitive fields at this time.
             var sensitiveKeywords = new[] { "password", "secret", "key", "token", "code" };
             return sensitiveKeywords.Any(k => propertyName.Contains(k, StringComparison.OrdinalIgnoreCase));
         }

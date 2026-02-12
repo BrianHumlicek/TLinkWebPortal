@@ -58,7 +58,7 @@ namespace DSC.TLink.ITv2
             GroupName = "Encryption",
             Order = 3)]
         [Required]
-        public string? IntegrationIdentificationNumber { get; set; } = "200328900112";
+        public string? IntegrationIdentificationNumber { get; set; } = "";
 
         /// <summary>
         /// TCP port for panel connections (default: 3072)
