@@ -8,7 +8,7 @@ on:
 env:
   REGISTRY_GHCR: ghcr.io
   # Replace 'your-dockerhub-username' with your actual Docker Hub ID
-  DOCKERHUB_REPO: your-dockerhub-username/${{ github.event.repository.name }}
+  DOCKERHUB_REPO: brianhumlicek/${{ github.event.repository.name }}
 
 jobs:
   build-and-push:
