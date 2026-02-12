@@ -6,8 +6,9 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  REGISTRY_GHCR: ghcr.io
+  # Replace 'your-dockerhub-username' with your actual Docker Hub ID
+  DOCKERHUB_REPO: your-dockerhub-username/${{ github.event.repository.name }}
 
 jobs:
   build-and-push:
@@ -20,23 +21,35 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Log in to GitHub Container Registry
+      # 1. Login to GitHub Container Registry
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ${{ env.REGISTRY_GHCR }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # 2. Login to Docker Hub (Add your secrets first!)
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 3. Extract metadata for BOTH registries
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: |
+            ${{ env.REGISTRY_GHCR }}/${{ github.repository }}
+            ${{ env.DOCKERHUB_REPO }}
           tags: |
             type=ref,event=branch
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
 
+      # 4. Build once and push to both
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
