@@ -29,4 +29,6 @@ EXPOSE 3072
 # Copy published app
 COPY --from=build /app/publish .
 
+VOLUME /app
+
 ENTRYPOINT ["dotnet", "TLinkWebPortal.dll"]
