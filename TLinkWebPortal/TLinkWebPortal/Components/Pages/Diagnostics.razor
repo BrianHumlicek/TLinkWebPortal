@@ -1,0 +1,232 @@
+@page "/diagnostics"
+@using TLinkWebPortal.Services.Diagnostics
+@using Microsoft.Extensions.Options
+@using System.Text
+@using TLinkWebPortal.Services.Settings
+@inject IDiagnosticsLogService LogService
+@inject IOptionsMonitor<DiagnosticsSettings> SettingsMonitor
+@inject ISettingsPersistenceService SettingsPersistence
+@inject IJSRuntime JS
+@implements IDisposable
+
+<PageTitle>Diagnostics</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <MudText Typo="Typo.h4" GutterBottom="true">Diagnostics</MudText>
+
+    <MudPaper Class="pa-4 mb-4">
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+            <MudSelect T="LogLevel" 
+                       Label="Minimum Log Level" 
+                       Value="minimumLogLevel"
+                       ValueChanged="OnLogLevelChanged"
+                       Variant="Variant.Outlined"
+                       Dense="true"
+                       Style="max-width: 200px;">
+                @foreach (var level in Enum.GetValues<LogLevel>().Where(l => l != LogLevel.None))
+                {
+                    <MudSelectItem T="LogLevel" Value="@level">@level</MudSelectItem>
+                }
+            </MudSelect>
+
+            <MudSwitch T="bool" 
+                       Value="appOnly"
+                       ValueChanged="OnAppOnlyChanged"
+                       Label="App only" 
+                       Color="Color.Secondary" />
+
+            <MudSwitch T="bool" 
+                       @bind-Value="autoScroll" 
+                       Label="Auto-scroll" 
+                       Color="Color.Primary" />
+
+            <MudSpacer />
+
+            <MudButton Variant="Variant.Outlined" 
+                       Color="Color.Secondary" 
+                       Size="Size.Small"
+                       OnClick="ClearLogs"
+                       StartIcon="@Icons.Material.Filled.Clear">
+                Clear
+            </MudButton>
+
+            <MudButton Variant="Variant.Filled" 
+                       Color="Color.Success" 
+                       Size="Size.Small"
+                       OnClick="DownloadLogs"
+                       StartIcon="@Icons.Material.Filled.Download">
+                Download
+            </MudButton>
+        </MudStack>
+    </MudPaper>
+
+    <MudPaper Class="pa-4" Style="height: 70vh; overflow-y: auto;" id="log-container">
+        <MudTable Items="@filteredLogs" 
+                  Dense="true" 
+                  Hover="true" 
+                  FixedHeader="true"
+                  Height="100%">
+            <HeaderContent>
+                <MudTh Style="width: 180px;">Timestamp</MudTh>
+                <MudTh Style="width: 100px;">Level</MudTh>
+                <MudTh Style="width: 250px;">Category</MudTh>
+                <MudTh>Message</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Timestamp">
+                    <MudText Typo="Typo.caption">@context.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</MudText>
+                </MudTd>
+                <MudTd DataLabel="Level">
+                    <MudChip T="string" 
+                             Size="Size.Small" 
+                             Color="@GetLogLevelColor(context.LogLevel)">
+                        @context.LogLevel
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="Category">
+                    <MudText Typo="Typo.caption">@GetShortCategory(context.Category)</MudText>
+                </MudTd>
+                <MudTd DataLabel="Message">
+                    <MudText Style="font-family: monospace; white-space: pre-wrap; font-size: 0.85em;">@context.Message</MudText>
+                    @if (context.Exception != null)
+                    {
+                        <MudText Color="Color.Error" Typo="Typo.caption" Style="font-family: monospace; white-space: pre-wrap;">
+                            @context.Exception.ToString()
+                        </MudText>
+                    }
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    </MudPaper>
+
+    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+        Showing @filteredLogs.Count of @allLogs.Count total log entries
+    </MudText>
+</MudContainer>
+
+@code {
+    private static readonly string[] SolutionPrefixes = ["TLinkWebPortal", "DSC.TLink"];
+
+    private LogLevel minimumLogLevel;
+    private bool appOnly = true;
+    private bool autoScroll = true;
+    private List<DiagnosticsLogEntry> allLogs = new();
+    private List<DiagnosticsLogEntry> filteredLogs = new();
+
+    protected override void OnInitialized()
+    {
+        minimumLogLevel = SettingsMonitor.CurrentValue.MinimumLogLevel;
+        allLogs = LogService.GetLogs().ToList();
+        FilterLogs();
+        LogService.LogReceived += OnLogReceived;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (autoScroll)
+            await ScrollToBottom();
+    }
+
+    private void OnLogReceived(DiagnosticsLogEntry entry)
+    {
+        InvokeAsync(() =>
+        {
+            allLogs.Add(entry);
+            if (MatchesFilter(entry))
+            {
+                filteredLogs.Add(entry);
+                StateHasChanged();
+            }
+        });
+    }
+
+    private async Task OnLogLevelChanged(LogLevel level)
+    {
+        minimumLogLevel = level;
+        FilterLogs();
+
+        // Auto-save to userSettings.json
+        await SettingsPersistence.SaveSettingsAsync(typeof(DiagnosticsSettings), new DiagnosticsSettings
+        {
+            MinimumLogLevel = minimumLogLevel
+        });
+    }
+
+    private void OnAppOnlyChanged(bool value)
+    {
+        appOnly = value;
+        FilterLogs();
+    }
+
+    private bool MatchesFilter(DiagnosticsLogEntry entry)
+    {
+        if (entry.LogLevel < minimumLogLevel)
+            return false;
+
+        if (appOnly && !SolutionPrefixes.Any(p => entry.Category.StartsWith(p, StringComparison.Ordinal)))
+            return false;
+
+        return true;
+    }
+
+    private void FilterLogs()
+    {
+        filteredLogs = allLogs.Where(MatchesFilter).ToList();
+    }
+
+    private void ClearLogs()
+    {
+        LogService.Clear();
+        allLogs.Clear();
+        filteredLogs.Clear();
+    }
+
+    private async Task DownloadLogs()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"TLinkWebPortal Diagnostics Log - Generated {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        sb.AppendLine(new string('=', 80));
+        sb.AppendLine();
+
+        foreach (var entry in filteredLogs)
+        {
+            sb.AppendLine($"[{entry.Timestamp.ToLocalTime():yyyy-MM-dd HH:mm:ss.fff}] [{entry.LogLevel}] {entry.Category}");
+            sb.AppendLine($"  {entry.Message}");
+            if (entry.Exception != null)
+                sb.AppendLine($"  Exception: {entry.Exception}");
+            sb.AppendLine();
+        }
+
+        var fileName = $"tlinkwebportal-logs-{DateTime.Now:yyyyMMdd-HHmmss}.txt";
+        var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+        var base64 = Convert.ToBase64String(bytes);
+        await JS.InvokeVoidAsync("downloadFile", fileName, base64);
+    }
+
+    private async Task ScrollToBottom()
+    {
+        await JS.InvokeVoidAsync("scrollToBottom", "log-container");
+    }
+
+    private static Color GetLogLevelColor(LogLevel level) => level switch
+    {
+        LogLevel.Trace => Color.Default,
+        LogLevel.Debug => Color.Info,
+        LogLevel.Information => Color.Success,
+        LogLevel.Warning => Color.Warning,
+        LogLevel.Error => Color.Error,
+        LogLevel.Critical => Color.Error,
+        _ => Color.Default
+    };
+
+    private static string GetShortCategory(string category)
+    {
+        var parts = category.Split('.');
+        return parts.Length > 0 ? parts[^1] : category;
+    }
+
+    public void Dispose()
+    {
+        LogService.LogReceived -= OnLogReceived;
+    }
+}

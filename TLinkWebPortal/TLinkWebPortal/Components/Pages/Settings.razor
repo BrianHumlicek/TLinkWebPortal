@@ -140,6 +140,22 @@
                     }
                 </div>
             }
+            else if (property.PropertyType.IsEnum)
+            {
+                <MudSelect T="string"
+                           Label="@property.DisplayName"
+                           Value="@currentValue?.ToString()"
+                           ValueChanged="@((string value) => propInfo.SetValue(settings, Enum.Parse(property.PropertyType, value)))"
+                           HelperText="@property.Description"
+                           Variant="Variant.Outlined"
+                           Dense="true"
+                           Margin="Margin.Dense">
+                    @foreach (var enumValue in Enum.GetValues(property.PropertyType))
+                    {
+                        <MudSelectItem T="string" Value="@enumValue.ToString()">@enumValue</MudSelectItem>
+                    }
+                </MudSelect>
+            }
         };
     }
 

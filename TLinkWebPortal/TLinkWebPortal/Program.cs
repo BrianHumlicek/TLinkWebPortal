@@ -3,6 +3,8 @@ using DSC.TLink.ITv2;
 using TLinkWebPortal.Components;
 using TLinkWebPortal.Services;
 using TLinkWebPortal.Services.Settings;
+using TLinkWebPortal.Services.Diagnostics;
+using TLinkWebPortal.Api.WebSocket;
 using MudBlazor.Services;
 
 namespace TLinkWebPortal
@@ -19,37 +21,54 @@ namespace TLinkWebPortal
                 optional: true, 
                 reloadOnChange: true);
 
-            // Register settings (will be auto-discovered)
+            // Register settings
             builder.Services.Configure<ITv2Settings>(
                 builder.Configuration.GetSection(ITv2Settings.SectionName));
+            builder.Services.Configure<DiagnosticsSettings>(
+                builder.Configuration.GetSection(DiagnosticsSettings.SectionName));
 
             // Register settings services
             builder.Services.AddSingleton<ISettingsDiscoveryService, SettingsDiscoveryService>();
             builder.Services.AddSingleton<ISettingsPersistenceService, SettingsPersistenceService>();
+
+            // Diagnostics log service (must be before logging configuration)
+            builder.Services.AddSingleton<IDiagnosticsLogService, DiagnosticsLogService>();
+
+            // Add custom logging provider
+            builder.Logging.ClearProviders();
+            builder.Logging.AddConsole();
+            builder.Logging.AddDebug();
+            builder.Logging.Services.AddSingleton<ILoggerProvider, DiagnosticsLoggerProvider>();
 
             // Add Blazor services
             builder.Services.AddRazorComponents()
                 .AddInteractiveServerComponents()
                 .AddInteractiveWebAssemblyComponents();
 
-            // Application services (singletons shared across handlers and UI)
+            // MediatR
+            builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssemblies(
+                typeof(Program).Assembly,
+                typeof(StartupExtensions).Assembly));
+
+            // Application services
             builder.Services.AddSingleton<IPartitionStatusService, PartitionStatusService>();
             builder.Services.AddSingleton<ISessionMonitor, SessionMonitor>();
 
-            // TLink services + MediatR (TLink handlers only)
-            builder.UseITv2();
+            // WebSocket API
+            builder.Services.AddSingleton<PanelWebSocketHandler>();
 
-            // Register web project MediatR handlers (additive to TLink's registration)
-            builder.Services.AddMediatR(cfg =>
-                cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
+            // TLink infrastructure
+            builder.UseITv2();
 
             // Add MudBlazor services
             builder.Services.AddMudServices();
 
             var app = builder.Build();
 
-            // Force initialization of discovery service
+            // Force initialization
             app.Services.GetRequiredService<ISettingsDiscoveryService>();
+
+            app.UseWebSockets();
 
             if (app.Environment.IsDevelopment())
             {
@@ -64,6 +83,12 @@ namespace TLinkWebPortal
             app.UseHttpsRedirection();
             app.UseStaticFiles();
             app.UseAntiforgery();
+
+            app.Map("/api/ws", async context =>
+            {
+                var handler = context.RequestServices.GetRequiredService<PanelWebSocketHandler>();
+                await handler.HandleConnectionAsync(context);
+            });
 
             app.MapRazorComponents<App>()
                 .AddInteractiveServerRenderMode()
