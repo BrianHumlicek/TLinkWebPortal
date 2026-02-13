@@ -31,7 +31,8 @@ namespace TLinkWebPortal.Api.WebSocket
             _sessionMonitor = sessionMonitor;
             _logger = logger;
 
-            // Subscribe to state changes
+            _logger.LogInformation("PanelWebSocketHandler initialized. Subscribed to state change events.");
+
             _sessionMonitor.SessionsChanged += OnSessionsChanged;
             _partitionService.PartitionStateChanged += OnPartitionChanged;
             _partitionService.ZoneStateChanged += OnZoneChanged;
@@ -41,29 +42,39 @@ namespace TLinkWebPortal.Api.WebSocket
         {
             if (!context.WebSockets.IsWebSocketRequest)
             {
+                _logger.LogWarning("Rejected non-WebSocket request to /api/ws from {RemoteIp}", 
+                    context.Connection.RemoteIpAddress);
                 context.Response.StatusCode = StatusCodes.Status400BadRequest;
                 return;
             }
 
             var webSocket = await context.WebSockets.AcceptWebSocketAsync();
+            var clientId = Guid.NewGuid().ToString("N")[..8];
             _connectedClients.Add(webSocket);
-            _logger.LogInformation("WebSocket client connected. Total clients: {Count}", _connectedClients.Count);
+            
+            _logger.LogInformation("WebSocket client {ClientId} connected from {RemoteIp}. Total clients: {Count}",
+                clientId, context.Connection.RemoteIpAddress, _connectedClients.Count);
 
             try
             {
-                await ReceiveMessagesAsync(webSocket);
+                await ReceiveMessagesAsync(webSocket, clientId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "WebSocket client {ClientId} error", clientId);
             }
             finally
             {
                 _connectedClients.TryTake(out _);
-                _logger.LogInformation("WebSocket client disconnected. Total clients: {Count}", _connectedClients.Count);
+                _logger.LogInformation("WebSocket client {ClientId} disconnected. Total clients: {Count}",
+                    clientId, _connectedClients.Count);
                 
                 if (webSocket.State == WebSocketState.Open)
                     await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
             }
         }
 
-        private async Task ReceiveMessagesAsync(System.Net.WebSockets.WebSocket webSocket)
+        private async Task ReceiveMessagesAsync(System.Net.WebSockets.WebSocket webSocket, string clientId)
         {
             var buffer = new byte[4096];
 
@@ -73,6 +84,7 @@ namespace TLinkWebPortal.Api.WebSocket
 
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
+                    _logger.LogDebug("Client {ClientId} sent close frame", clientId);
                     await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closed by client", CancellationToken.None);
                     break;
                 }
@@ -80,50 +92,60 @@ namespace TLinkWebPortal.Api.WebSocket
                 if (result.MessageType == WebSocketMessageType.Text)
                 {
                     var json = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                    await ProcessMessageAsync(webSocket, json);
+                    _logger.LogTrace("Client {ClientId} ← {Json}", clientId, json);
+                    await ProcessMessageAsync(webSocket, json, clientId);
                 }
             }
         }
 
-        private async Task ProcessMessageAsync(System.Net.WebSockets.WebSocket webSocket, string json)
+        private async Task ProcessMessageAsync(System.Net.WebSockets.WebSocket webSocket, string json, string clientId)
         {
             try
             {
                 var doc = JsonDocument.Parse(json);
                 var type = doc.RootElement.GetProperty("type").GetString();
 
+                _logger.LogDebug("Client {ClientId} request: {Type}", clientId, type);
+
                 switch (type)
                 {
                     case "get_full_state":
-                        await SendFullStateAsync(webSocket);
+                        await SendFullStateAsync(webSocket, clientId);
                         break;
 
                     case "arm_away":
                     case "arm_home":
                     case "arm_night":
                     case "disarm":
-                        await HandleArmCommandAsync(webSocket, json, type);
+                        await HandleArmCommandAsync(webSocket, json, type, clientId);
                         break;
 
                     default:
-                        await SendErrorAsync(webSocket, $"Unknown message type: {type}");
+                        _logger.LogWarning("Client {ClientId} sent unknown message type: {Type}", clientId, type);
+                        await SendErrorAsync(webSocket, $"Unknown message type: {type}", clientId);
                         break;
                 }
             }
+            catch (JsonException ex)
+            {
+                _logger.LogError(ex, "Client {ClientId} sent invalid JSON: {Json}", clientId, json);
+                await SendErrorAsync(webSocket, $"Invalid JSON: {ex.Message}", clientId);
+            }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing WebSocket message: {Json}", json);
-                await SendErrorAsync(webSocket, $"Invalid message format: {ex.Message}");
+                _logger.LogError(ex, "Error processing message from client {ClientId}: {Json}", clientId, json);
+                await SendErrorAsync(webSocket, $"Processing error: {ex.Message}", clientId);
             }
         }
 
-        private async Task SendFullStateAsync(System.Net.WebSockets.WebSocket webSocket)
+        private async Task SendFullStateAsync(System.Net.WebSockets.WebSocket webSocket, string clientId)
         {
             var sessions = _sessionManager.GetActiveSessions()
+                .Where(sessionId => !string.IsNullOrWhiteSpace(sessionId))
                 .Select(sessionId => new SessionDto
                 {
                     SessionId = sessionId,
-                    Name = sessionId, // TODO: Add friendly names
+                    Name = sessionId,
                     Partitions = _partitionService.GetPartitions(sessionId)
                         .Select(kvp => new PartitionDto
                         {
@@ -144,46 +166,68 @@ namespace TLinkWebPortal.Api.WebSocket
                 })
                 .ToList();
 
+            _logger.LogDebug(
+                "Client {ClientId} → full_state: {SessionCount} sessions, {PartitionCount} partitions, {ZoneCount} zones",
+                clientId,
+                sessions.Count,
+                sessions.Sum(s => s.Partitions.Count),
+                sessions.Sum(s => s.Partitions.Sum(p => p.Zones.Count)));
+
             var message = new FullStateMessage { Sessions = sessions };
-            await SendMessageAsync(webSocket, message);
+            await SendMessageAsync(webSocket, message, clientId);
         }
 
-        private async Task HandleArmCommandAsync(System.Net.WebSockets.WebSocket webSocket, string json, string type)
+        private async Task HandleArmCommandAsync(System.Net.WebSockets.WebSocket webSocket, string json, string type, string clientId)
         {
-            // TODO: Implement panel command sending via MediatR
-            // For now, just acknowledge
-            await SendErrorAsync(webSocket, $"Command '{type}' not yet implemented");
+            _logger.LogDebug("Client {ClientId} sent {Command} (not implemented)", clientId, type);
+            await SendErrorAsync(webSocket, $"Command '{type}' not yet implemented", clientId);
         }
 
-        private async Task SendMessageAsync(System.Net.WebSockets.WebSocket webSocket, WebSocketMessage message)
+        private async Task SendMessageAsync(System.Net.WebSockets.WebSocket webSocket, WebSocketMessage message, string clientId)
         {
             if (webSocket.State != WebSocketState.Open)
+            {
+                _logger.LogTrace("Skipping send to client {ClientId} (state: {State})", clientId, webSocket.State);
                 return;
+            }
 
             var json = JsonSerializer.Serialize(message, new JsonSerializerOptions
             {
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase
             });
 
+            _logger.LogTrace("Client {ClientId} → {MessageType}: {Json}", clientId, message.Type, json);
+
             var bytes = Encoding.UTF8.GetBytes(json);
             await webSocket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
         }
 
-        private async Task SendErrorAsync(System.Net.WebSockets.WebSocket webSocket, string message)
+        private async Task SendErrorAsync(System.Net.WebSockets.WebSocket webSocket, string errorMessage, string clientId)
         {
-            await SendMessageAsync(webSocket, new ErrorMessage { Message = message });
+            _logger.LogWarning("Client {ClientId} → error: {Message}", clientId, errorMessage);
+            await SendMessageAsync(webSocket, new ErrorMessage { Message = errorMessage }, clientId);
         }
 
         #region Event Handlers (broadcast to all clients)
 
         private void OnSessionsChanged()
         {
-            // When sessions change, send full state to all clients
+            _logger.LogDebug("Session list changed, broadcasting full_state to {Count} clients", 
+                _connectedClients.Count(c => c.State == WebSocketState.Open));
             _ = BroadcastFullStateAsync();
         }
 
         private void OnPartitionChanged(object? sender, PartitionStateChangedEventArgs e)
         {
+            if (string.IsNullOrWhiteSpace(e.SessionId))
+            {
+                _logger.LogWarning("Ignoring partition update with empty sessionId");
+                return;
+            }
+
+            _logger.LogDebug("Broadcasting partition_update: Session={SessionId}, Partition={Partition}, Status={Status}",
+                e.SessionId, e.Partition.PartitionNumber, MapPartitionStatus(e.Partition));
+
             var message = new PartitionUpdateMessage
             {
                 SessionId = e.SessionId,
@@ -196,6 +240,15 @@ namespace TLinkWebPortal.Api.WebSocket
 
         private void OnZoneChanged(object? sender, ZoneStateChangedEventArgs e)
         {
+            if (string.IsNullOrWhiteSpace(e.SessionId))
+            {
+                _logger.LogWarning("Ignoring zone update with empty sessionId");
+                return;
+            }
+
+            _logger.LogDebug("Broadcasting zone_update: Session={SessionId}, Partition={Partition}, Zone={Zone}, Open={Open}",
+                e.SessionId, e.PartitionNumber, e.Zone.ZoneNumber, e.Zone.IsOpen);
+
             var message = new ZoneUpdateMessage
             {
                 SessionId = e.SessionId,
@@ -209,11 +262,14 @@ namespace TLinkWebPortal.Api.WebSocket
 
         private async Task BroadcastFullStateAsync()
         {
-            foreach (var client in _connectedClients.Where(c => c.State == WebSocketState.Open))
+            var openClients = _connectedClients.Where(c => c.State == WebSocketState.Open).ToList();
+            _logger.LogTrace("Broadcasting full_state to {Count} clients", openClients.Count);
+
+            foreach (var client in openClients)
             {
                 try
                 {
-                    await SendFullStateAsync(client);
+                    await SendFullStateAsync(client, "broadcast");
                 }
                 catch (Exception ex)
                 {
@@ -224,15 +280,18 @@ namespace TLinkWebPortal.Api.WebSocket
 
         private async Task BroadcastMessageAsync(WebSocketMessage message)
         {
-            foreach (var client in _connectedClients.Where(c => c.State == WebSocketState.Open))
+            var openClients = _connectedClients.Where(c => c.State == WebSocketState.Open).ToList();
+            _logger.LogTrace("Broadcasting {MessageType} to {Count} clients", message.Type, openClients.Count);
+
+            foreach (var client in openClients)
             {
                 try
                 {
-                    await SendMessageAsync(client, message);
+                    await SendMessageAsync(client, message, "broadcast");
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error broadcasting message to client");
+                    _logger.LogError(ex, "Error broadcasting {MessageType} to client", message.Type);
                 }
             }
         }
@@ -243,17 +302,16 @@ namespace TLinkWebPortal.Api.WebSocket
 
         private static string MapPartitionStatus(Services.Models.PartitionState partition)
         {
-            // TODO: Track actual armed state - for now infer from IsReady
+            // TODO: Track actual armed state
             if (partition.IsArmed)
-                return "armed_away"; // Need to track arm mode
+                return "armed_away";
             
             return partition.IsReady ? "disarmed" : "disarmed";
         }
 
         private static string DetermineDeviceClass(Services.Models.ZoneState zone)
         {
-            // TODO: Zone type configuration - for now default to door
-            // Could be determined by zone number ranges or configured per-zone
+            // TODO: Zone type configuration
             return "door";
         }
 
