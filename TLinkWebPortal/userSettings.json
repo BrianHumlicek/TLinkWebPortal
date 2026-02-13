@@ -1,9 +1,0 @@
-{
-  "tLink": {
-    "integrationAccessCodeType1": "",
-    "integrationAccessCodeType2": "",
-    "integrationIdentificationNumber": "",
-    "listenPort": 7700,
-    "useTls": false
-  }
-}
