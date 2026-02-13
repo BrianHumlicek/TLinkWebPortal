@@ -78,23 +78,32 @@ namespace TLinkWebPortal.Api.WebSocket
         {
             var buffer = new byte[4096];
 
-            while (webSocket.State == WebSocketState.Open)
+            try
             {
-                var result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-
-                if (result.MessageType == WebSocketMessageType.Close)
+                while (webSocket.State == WebSocketState.Open)
                 {
-                    _logger.LogDebug("Client {ClientId} sent close frame", clientId);
-                    await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closed by client", CancellationToken.None);
-                    break;
-                }
+                    var result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
 
-                if (result.MessageType == WebSocketMessageType.Text)
-                {
-                    var json = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                    _logger.LogTrace("Client {ClientId} ← {Json}", clientId, json);
-                    await ProcessMessageAsync(webSocket, json, clientId);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        _logger.LogDebug("Client {ClientId} sent close frame", clientId);
+                        await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closed by client", CancellationToken.None);
+                        break;
+                    }
+
+                    if (result.MessageType == WebSocketMessageType.Text)
+                    {
+                        var json = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                        _logger.LogTrace("Client {ClientId} ← {Json}", clientId, json);
+                        await ProcessMessageAsync(webSocket, json, clientId);
+                    }
                 }
+            }
+            catch (WebSocketException ex) when (ex.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely)
+            {
+                // Client disconnected abruptly (network drop, browser close, etc.)
+                // This is normal behavior, not an error
+                _logger.LogDebug("Client {ClientId} disconnected without close handshake", clientId);
             }
         }
 
@@ -190,6 +199,11 @@ namespace TLinkWebPortal.Api.WebSocket
             await SendErrorAsync(webSocket, $"Command '{type}' not yet implemented", clientId);
         }
 
+        private static readonly JsonSerializerOptions _jsonOptions = new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
+
         private async Task SendMessageAsync(System.Net.WebSockets.WebSocket webSocket, WebSocketMessage message, string clientId)
         {
             if (webSocket.State != WebSocketState.Open)
@@ -198,10 +212,8 @@ namespace TLinkWebPortal.Api.WebSocket
                 return;
             }
 
-            var json = JsonSerializer.Serialize(message, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
+            // Serialize using message.GetType() so derived properties are included
+            var json = JsonSerializer.Serialize(message, message.GetType(), _jsonOptions);
 
             _logger.LogTrace("Client {ClientId} → {MessageType}: {Json}", clientId, message.Type, json);
 
