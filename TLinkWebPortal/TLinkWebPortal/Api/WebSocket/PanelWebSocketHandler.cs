@@ -142,27 +142,34 @@ namespace TLinkWebPortal.Api.WebSocket
         {
             var sessions = _sessionManager.GetActiveSessions()
                 .Where(sessionId => !string.IsNullOrWhiteSpace(sessionId))
-                .Select(sessionId => new SessionDto
+                .Select(sessionId =>
                 {
-                    SessionId = sessionId,
-                    Name = sessionId,
-                    Partitions = _partitionService.GetPartitions(sessionId)
-                        .Select(kvp => new PartitionDto
-                        {
-                            PartitionNumber = kvp.Key,
-                            Name = $"Partition {kvp.Key}",
-                            Status = MapPartitionStatus(kvp.Value),
-                            Zones = kvp.Value.Zones
-                                .Select(z => new ZoneDto
-                                {
-                                    ZoneNumber = z.Key,
-                                    Name = string.IsNullOrEmpty(z.Value.ZoneName) ? $"Zone {z.Key}" : z.Value.ZoneName,
-                                    DeviceClass = DetermineDeviceClass(z.Value),
-                                    Open = z.Value.IsOpen
-                                })
-                                .ToList()
-                        })
-                        .ToList()
+                    var partitions = _partitionService.GetPartitions(sessionId);
+                    var zones = _partitionService.GetZones(sessionId);
+
+                    return new SessionDto
+                    {
+                        SessionId = sessionId,
+                        Name = sessionId,
+                        Partitions = partitions
+                            .Select(kvp => new PartitionDto
+                            {
+                                PartitionNumber = kvp.Key,
+                                Name = $"Partition {kvp.Key}",
+                                Status = MapPartitionStatus(kvp.Value)
+                            })
+                            .ToList(),
+                        Zones = zones
+                            .Select(kvp => new ZoneDto
+                            {
+                                ZoneNumber = kvp.Key,
+                                Name = string.IsNullOrEmpty(kvp.Value.ZoneName) ? $"Zone {kvp.Key}" : kvp.Value.ZoneName,
+                                DeviceClass = DetermineDeviceClass(kvp.Value),
+                                Open = kvp.Value.IsOpen,
+                                Partitions = kvp.Value.Partitions
+                            })
+                            .ToList()
+                    };
                 })
                 .ToList();
 
@@ -171,7 +178,7 @@ namespace TLinkWebPortal.Api.WebSocket
                 clientId,
                 sessions.Count,
                 sessions.Sum(s => s.Partitions.Count),
-                sessions.Sum(s => s.Partitions.Sum(p => p.Zones.Count)));
+                sessions.Sum(s => s.Zones.Count));
 
             var message = new FullStateMessage { Sessions = sessions };
             await SendMessageAsync(webSocket, message, clientId);
@@ -246,13 +253,12 @@ namespace TLinkWebPortal.Api.WebSocket
                 return;
             }
 
-            _logger.LogDebug("Broadcasting zone_update: Session={SessionId}, Partition={Partition}, Zone={Zone}, Open={Open}",
-                e.SessionId, e.PartitionNumber, e.Zone.ZoneNumber, e.Zone.IsOpen);
+            _logger.LogDebug("Broadcasting zone_update: Session={SessionId}, Zone={Zone}, Open={Open}",
+                e.SessionId, e.Zone.ZoneNumber, e.Zone.IsOpen);
 
             var message = new ZoneUpdateMessage
             {
                 SessionId = e.SessionId,
-                PartitionNumber = e.PartitionNumber,
                 ZoneNumber = e.Zone.ZoneNumber,
                 Open = e.Zone.IsOpen
             };

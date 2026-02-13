@@ -50,7 +50,7 @@ namespace TLinkWebPortal.Api.WebSocket.Models
 
     #endregion
 
-    #region Server → Client
+    #region Server → Client Messages
 
     public record FullStateMessage : WebSocketMessage
     {
@@ -81,9 +81,6 @@ namespace TLinkWebPortal.Api.WebSocket.Models
         [JsonPropertyName("session_id")]
         public required string SessionId { get; init; }
 
-        [JsonPropertyName("partition_number")]
-        public required byte PartitionNumber { get; init; }
-
         [JsonPropertyName("zone_number")]
         public required byte ZoneNumber { get; init; }
 
@@ -113,6 +110,9 @@ namespace TLinkWebPortal.Api.WebSocket.Models
 
         [JsonPropertyName("partitions")]
         public required List<PartitionDto> Partitions { get; init; }
+
+        [JsonPropertyName("zones")]
+        public required List<ZoneDto> Zones { get; init; }
     }
 
     public record PartitionDto
@@ -125,9 +125,6 @@ namespace TLinkWebPortal.Api.WebSocket.Models
 
         [JsonPropertyName("status")]
         public required string Status { get; init; }
-
-        [JsonPropertyName("zones")]
-        public required List<ZoneDto> Zones { get; init; }
     }
 
     public record ZoneDto
@@ -143,6 +140,9 @@ namespace TLinkWebPortal.Api.WebSocket.Models
 
         [JsonPropertyName("open")]
         public required bool Open { get; init; }
+
+        [JsonPropertyName("partitions")]
+        public required List<byte> Partitions { get; init; }
     }
 
     #endregion

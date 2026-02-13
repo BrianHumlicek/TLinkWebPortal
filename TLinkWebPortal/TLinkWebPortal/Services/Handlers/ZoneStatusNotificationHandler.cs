@@ -29,20 +29,24 @@ namespace TLinkWebPortal.Services.Handlers
             var msg = notification.MessageData;
             var sessionId = notification.SessionId;
 
-            // Zones 1-64 = partition 1, 65-128 = partition 2, etc.
-            byte partitionNumber = (byte)Math.Max(1, (msg.ZoneNumber - 1) / 64 + 1);
+            // Calculate which partition(s) this zone belongs to (zones 1-64 = partition 1, etc.)
+            byte calculatedPartition = (byte)Math.Max(1, (msg.ZoneNumber - 1) / 64 + 1);
 
-            var zone = _service.GetZone(sessionId, partitionNumber, msg.ZoneNumber) 
-                ?? new ZoneState { ZoneNumber = msg.ZoneNumber };
+            var zone = _service.GetZone(sessionId, msg.ZoneNumber) 
+                ?? new ZoneState 
+                { 
+                    ZoneNumber = msg.ZoneNumber,
+                    Partitions = new List<byte> { calculatedPartition } // Default association
+                };
 
             zone.IsOpen = msg.Status == NotificationLifestyleZoneStatus.LifeStyleZoneStatusCode.Open;
             zone.LastUpdated = notification.ReceivedAt;
 
             _logger.LogDebug(
-                "Zone {Zone} is now {Status} (Partition: {Partition}, Session: {SessionId})",
-                msg.ZoneNumber, zone.IsOpen ? "OPEN" : "CLOSED", partitionNumber, sessionId);
+                "Zone {Zone} is now {Status} (Session: {SessionId}, Associated Partitions: {Partitions})",
+                msg.ZoneNumber, zone.IsOpen ? "OPEN" : "CLOSED", sessionId, string.Join(",", zone.Partitions));
 
-            _service.UpdateZone(sessionId, partitionNumber, zone);
+            _service.UpdateZone(sessionId, zone);
 
             return Task.CompletedTask;
         }

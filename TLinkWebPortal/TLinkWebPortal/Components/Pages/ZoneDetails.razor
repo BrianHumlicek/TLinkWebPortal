@@ -7,85 +7,106 @@
 
 <PageTitle>Zone Details - Partition @PartitionNumber</PageTitle>
 
-<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
-    <MudBreadcrumbs Items="_breadcrumbs" Class="mb-4" />
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <MudBreadcrumbs Items="breadcrumbs" Class="mb-4"></MudBreadcrumbs>
 
-    <MudText Typo="Typo.h4" GutterBottom="true">
-        Partition @PartitionNumber - Zone Details
-    </MudText>
-
-    @if (partition == null)
+    @if (session == null)
     {
         <MudAlert Severity="Severity.Warning">
-            Partition not found or no data available.
+            Session @SessionId not found
+        </MudAlert>
+    }
+    else if (partition == null)
+    {
+        <MudAlert Severity="Severity.Warning">
+            Partition @PartitionNumber not found
         </MudAlert>
     }
     else
     {
-        <MudGrid>
-            @foreach (var (zoneNumber, zone) in partition.Zones.OrderBy(z => z.Key))
-            {
-                <MudItem xs="12" sm="6" md="4">
-                    <MudCard Outlined="true">
-                        <MudCardHeader>
-                            <CardHeaderContent>
-                                <MudText Typo="Typo.h6">
-                                    Zone @zoneNumber
-                                    @if (!string.IsNullOrEmpty(zone.ZoneName))
-                                    {
-                                        <br />
-                                        <MudText Typo="Typo.caption">@zone.ZoneName</MudText>
-                                    }
-                                </MudText>
-                            </CardHeaderContent>
-                            <CardHeaderActions>
-                                <MudIcon Icon="@GetZoneIcon(zone)" 
-                                         Color="@GetZoneColor(zone)" 
-                                         Size="Size.Large" />
-                            </CardHeaderActions>
-                        </MudCardHeader>
-                        <MudCardContent>
-                            <MudStack Spacing="1">
-                                <MudText>
-                                    <MudIcon Icon="@Icons.Material.Filled.Lock" Size="Size.Small" />
-                                    Status: <strong>@(zone.IsOpen ? "OPEN" : "CLOSED")</strong>
-                                </MudText>
-                                
-                                @if (zone.IsFaulted)
-                                {
-                                    <MudText Color="Color.Error">
-                                        <MudIcon Icon="@Icons.Material.Filled.Warning" Size="Size.Small" />
-                                        FAULTED
-                                    </MudText>
-                                }
-                                
-                                @if (zone.IsTampered)
-                                {
-                                    <MudText Color="Color.Error">
-                                        <MudIcon Icon="@Icons.Material.Filled.Error" Size="Size.Small" />
-                                        TAMPERED
-                                    </MudText>
-                                }
-                                
-                                @if (zone.IsBypassed)
-                                {
-                                    <MudText Color="Color.Info">
-                                        <MudIcon Icon="@Icons.Material.Filled.Block" Size="Size.Small" />
-                                        BYPASSED
-                                    </MudText>
-                                }
-                                
-                                <MudDivider Class="my-2" />
-                                
-                                <MudText Typo="Typo.caption">
-                                    Last Updated: @zone.LastUpdated.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
-                                </MudText>
-                            </MudStack>
-                        </MudCardContent>
-                    </MudCard>
-                </MudItem>
-            }
-        </MudGrid>
+        <MudPaper Class="pa-4 mb-4">
+            <MudStack Row="true" AlignItems="AlignItems.Center">
+                <MudText Typo="Typo.h4">Partition @PartitionNumber</MudText>
+                <MudSpacer />
+                <MudChip T="string" 
+                         Color="@(partition.IsReady ? Color.Success : Color.Warning)" 
+                         Size="Size.Medium">
+                    @partition.ArmMode
+                </MudChip>
+            </MudStack>
+        </MudPaper>
+
+        <MudText Typo="Typo.h5" Class="mb-3">
+            Zones (@zonesForPartition.Count)
+        </MudText>
+
+        @if (!zonesForPartition.Any())
+        {
+            <MudAlert Severity="Severity.Info">
+                No zones assigned to this partition
+            </MudAlert>
+        }
+        else
+        {
+            <MudTable Items="@zonesForPartition" Dense="true" Hover="true" Striped="true">
+                <HeaderContent>
+                    <MudTh>Zone</MudTh>
+                    <MudTh>Name</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>State Flags</MudTh>
+                    <MudTh>Other Partitions</MudTh>
+                    <MudTh>Last Updated</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Zone">
+                        <MudChip T="string" Size="Size.Small">@context.ZoneNumber</MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Name">
+                        @(string.IsNullOrEmpty(context.ZoneName) ? $"Zone {context.ZoneNumber}" : context.ZoneName)
+                    </MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudChip T="string" 
+                                 Size="Size.Small" 
+                                 Color="@GetZoneColor(context)"
+                                 Icon="@GetZoneIcon(context)">
+                            @(context.IsOpen ? "OPEN" : "CLOSED")
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="State Flags">
+                        <MudStack Row="true" Spacing="1">
+                            @if (context.IsFaulted)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Error">FAULTED</MudChip>
+                            }
+                            @if (context.IsTampered)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Error">TAMPERED</MudChip>
+                            }
+                            @if (context.IsBypassed)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Info">BYPASSED</MudChip>
+                            }
+                        </MudStack>
+                    </MudTd>
+                    <MudTd DataLabel="Other Partitions">
+                        @{
+                            var otherPartitions = context.Partitions.Where(p => p != PartitionNumber).ToList();
+                            if (otherPartitions.Any())
+                            {
+                                <MudText Typo="Typo.caption">@string.Join(", ", otherPartitions)</MudText>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">—</MudText>
+                            }
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Last Updated">
+                        <MudText Typo="Typo.caption">@context.LastUpdated.ToLocalTime().ToString("HH:mm:ss")</MudText>
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
     }
 </MudContainer>
 
@@ -96,50 +117,47 @@
     [Parameter]
     public int PartitionNumber { get; set; }
 
+    private SessionState? session;
     private PartitionState? partition;
-    private List<BreadcrumbItem> _breadcrumbs = new();
+    private List<ZoneState> zonesForPartition = new();
+    private List<BreadcrumbItem> breadcrumbs = new();
 
     protected override void OnInitialized()
     {
-        _breadcrumbs = new List<BreadcrumbItem>
+        breadcrumbs = new List<BreadcrumbItem>
         {
             new BreadcrumbItem("Home", href: "/"),
+            new BreadcrumbItem($"Session: {SessionId}", href: null, disabled: true),
             new BreadcrumbItem($"Partition {PartitionNumber}", href: null, disabled: true)
         };
 
-        RefreshPartition();
-        
-        PartitionService.PartitionStateChanged += OnPartitionStateChanged;
-        PartitionService.ZoneStateChanged += OnZoneStateChanged;
+        LoadData();
+        PartitionService.PartitionStateChanged += OnStateChanged;
+        PartitionService.ZoneStateChanged += OnStateChanged;
     }
 
-    private void RefreshPartition()
+    private void LoadData()
     {
+        session = PartitionService.GetSession(SessionId);
         partition = PartitionService.GetPartition(SessionId, (byte)PartitionNumber);
-    }
 
-    private void OnPartitionStateChanged(object? sender, PartitionStateChangedEventArgs e)
-    {
-        if (e.SessionId == SessionId && e.Partition.PartitionNumber == PartitionNumber)
+        if (session != null)
         {
-            InvokeAsync(() =>
-            {
-                RefreshPartition();
-                StateHasChanged();
-            });
+            // Get all zones that belong to this partition
+            zonesForPartition = session.Zones.Values
+                .Where(z => z.Partitions.Contains((byte)PartitionNumber))
+                .OrderBy(z => z.ZoneNumber)
+                .ToList();
         }
     }
 
-    private void OnZoneStateChanged(object? sender, ZoneStateChangedEventArgs e)
+    private void OnStateChanged(object? sender, EventArgs e)
     {
-        if (e.SessionId == SessionId && e.PartitionNumber == PartitionNumber)
+        InvokeAsync(() =>
         {
-            InvokeAsync(() =>
-            {
-                RefreshPartition();
-                StateHasChanged();
-            });
-        }
+            LoadData();
+            StateHasChanged();
+        });
     }
 
     private Color GetZoneColor(ZoneState zone)
@@ -162,7 +180,7 @@
 
     public void Dispose()
     {
-        PartitionService.PartitionStateChanged -= OnPartitionStateChanged;
-        PartitionService.ZoneStateChanged -= OnZoneStateChanged;
+        PartitionService.PartitionStateChanged -= OnStateChanged;
+        PartitionService.ZoneStateChanged -= OnStateChanged;
     }
 }

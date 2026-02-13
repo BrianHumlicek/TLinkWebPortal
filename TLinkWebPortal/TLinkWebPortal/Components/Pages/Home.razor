@@ -30,18 +30,19 @@
 
         @if (!string.IsNullOrEmpty(selectedSessionId))
         {
-            var partitions = PartitionService.GetPartitions(selectedSessionId);
+            var session = PartitionService.GetSession(selectedSessionId);
             
-            @if (!partitions.Any())
+            @if (session == null)
             {
                 <MudAlert Severity="Severity.Info" Class="mt-4">
-                    <MudText>Waiting for partition status data...</MudText>
+                    <MudText>Waiting for session data...</MudText>
                 </MudAlert>
             }
             else
             {
-                <MudGrid>
-                    @foreach (var (partitionNumber, partition) in partitions)
+                <MudText Typo="Typo.h5" Class="mb-3">Partitions</MudText>
+                <MudGrid Class="mb-6">
+                    @foreach (var (partitionNumber, partition) in session.Partitions.OrderBy(p => p.Key))
                     {
                         <MudItem xs="12" lg="6">
                             <MudCard Elevation="4" Class="mb-4">
@@ -58,46 +59,41 @@
                                     </CardHeaderActions>
                                 </MudCardHeader>
                                 <MudCardContent>
-                                    <MudStack>
-                                        @if (!partition.Zones.Any())
-                                        {
-                                            <MudText Typo="Typo.caption" Color="Color.Secondary">
-                                                No zone data available
-                                            </MudText>
-                                        }
-                                        else
-                                        {
-                                            <MudGrid Spacing="1">
-                                                @foreach (var (zoneNumber, zone) in partition.Zones.OrderBy(z => z.Key))
-                                                {
-                                                    <MudItem xs="6" sm="4" md="3">
-                                                        <MudTooltip Text="@GetZoneTooltip(zone)">
-                                                            <MudChip T="string" 
-                                                                     Size="Size.Small" 
-                                                                     Color="@GetZoneColor(zone)"
-                                                                     Variant="@(zone.IsOpen || zone.IsFaulted || zone.IsTampered ? Variant.Filled : Variant.Outlined)">
-                                                                <MudIcon Icon="@GetZoneIcon(zone)" Size="Size.Small" Class="mr-1" />
-                                                                Z@zoneNumber
-                                                            </MudChip>
-                                                        </MudTooltip>
-                                                    </MudItem>
-                                                }
-                                            </MudGrid>
-                                        }
-                                    </MudStack>
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                        Zones: @session.Zones.Values.Count(z => z.Partitions.Contains(partitionNumber))
+                                    </MudText>
                                 </MudCardContent>
                                 <MudCardActions>
                                     <MudButton Variant="Variant.Text" 
                                                Color="Color.Primary" 
-                                               OnClick="@(() => ShowZoneDetails(partitionNumber))"
-                                               Disabled="!partition.Zones.Any()">
-                                        View Details
+                                               OnClick="@(() => ShowZoneDetails(partitionNumber))">
+                                        View Zones
                                     </MudButton>
                                 </MudCardActions>
                             </MudCard>
                         </MudItem>
                     }
                 </MudGrid>
+
+                <MudText Typo="Typo.h5" Class="mb-3">All Zones (@session.Zones.Count)</MudText>
+                <MudPaper Class="pa-4">
+                    <MudGrid Spacing="1">
+                        @foreach (var (zoneNumber, zone) in session.Zones.OrderBy(z => z.Key))
+                        {
+                            <MudItem xs="6" sm="4" md="3" lg="2">
+                                <MudTooltip Text="@GetZoneTooltip(zone)">
+                                    <MudChip T="string" 
+                                             Size="Size.Small" 
+                                             Color="@GetZoneColor(zone)"
+                                             Variant="@(zone.IsOpen || zone.IsFaulted || zone.IsTampered ? Variant.Filled : Variant.Outlined)">
+                                        <MudIcon Icon="@GetZoneIcon(zone)" Size="Size.Small" Class="mr-1" />
+                                        Z@zoneNumber
+                                    </MudChip>
+                                </MudTooltip>
+                            </MudItem>
+                        }
+                    </MudGrid>
+                </MudPaper>
             }
         }
     }
@@ -109,10 +105,7 @@
 
     protected override void OnInitialized()
     {
-        // Load any sessions that connected before the page loaded
         RefreshSessions();
-
-        // All event-driven — no timers
         SessionMonitor.SessionsChanged += OnSessionsChanged;
         PartitionService.PartitionStateChanged += OnStateChanged;
         PartitionService.ZoneStateChanged += OnStateChanged;
@@ -170,6 +163,9 @@
         if (zone.IsTampered) status.Add("TAMPERED");
         if (zone.IsFaulted) status.Add("FAULTED");
         if (zone.IsBypassed) status.Add("BYPASSED");
+
+        if (zone.Partitions.Any())
+            status.Add($"Partitions: {string.Join(",", zone.Partitions)}");
         
         status.Add($"Updated: {zone.LastUpdated.ToLocalTime():HH:mm:ss}");
         
