@@ -15,9 +15,10 @@ namespace TLinkWebPortal
         {
             var builder = WebApplication.CreateBuilder(args);
 
-            // Load user settings file (overrides appsettings.json)
+            // Load user settings from persist folder (overrides appsettings.json)
+            // AddJsonFile resolves relative paths from ContentRootPath
             builder.Configuration.AddJsonFile(
-                "userSettings.json", 
+                SettingsPersistenceService.SettingsFileRelativePath,
                 optional: true, 
                 reloadOnChange: true);
 

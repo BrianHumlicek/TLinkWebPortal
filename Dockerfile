@@ -21,7 +21,7 @@ RUN dotnet publish "TLinkWebPortal.csproj" -c Release -o /app/publish /p:UseAppH
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 
-# Expose ports (HTTP, HTTPS, and panel connection port)
+# Expose ports
 EXPOSE 8080
 EXPOSE 8443
 EXPOSE 3072
@@ -29,6 +29,8 @@ EXPOSE 3072
 # Copy published app
 COPY --from=build /app/publish .
 
-VOLUME /app
+# Create persist directory and declare as volume
+RUN mkdir -p /app/persist
+VOLUME /app/persist
 
 ENTRYPOINT ["dotnet", "TLinkWebPortal.dll"]
