@@ -9,8 +9,27 @@ namespace TLinkWebPortal.Services.Diagnostics
 
         [Display(
             Name = "Minimum Log Level",
-            Description = "Minimum log level to display in diagnostics viewer",
+            Description = "Global minimum log level for capture and display",
             Order = 1)]
         public LogLevel MinimumLogLevel { get; set; } = LogLevel.Information;
+
+        [Display(
+            Name = "Max Log Entries",
+            Description = "Maximum number of log entries to retain in the buffer",
+            Order = 2)]
+        [Range(100, 100_000)]
+        public int MaxLogEntries { get; set; } = 5000;
+
+        [Display(
+            Name = "App Only",
+            Description = "Only capture logs from solution assemblies (TLinkWebPortal, DSC.TLink)",
+            Order = 3)]
+        public bool AppOnly { get; set; } = true;
+
+        /// <summary>
+        /// Per-category log level overrides. Managed from the Diagnostics page.
+        /// Key = full category name, Value = minimum log level for that category.
+        /// </summary>
+        public Dictionary<string, LogLevel> CategoryOverrides { get; set; } = new();
     }
 }

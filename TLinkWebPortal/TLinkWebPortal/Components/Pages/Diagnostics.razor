@@ -14,23 +14,24 @@
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
     <MudText Typo="Typo.h4" GutterBottom="true">Diagnostics</MudText>
 
+    @* ── Toolbar ── *@
     <MudPaper Class="pa-4 mb-4">
         <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
             <MudSelect T="LogLevel" 
-                       Label="Minimum Log Level" 
-                       Value="minimumLogLevel"
-                       ValueChanged="OnLogLevelChanged"
+                       Label="Global Log Level" 
+                       Value="settings.MinimumLogLevel"
+                       ValueChanged="OnGlobalLogLevelChanged"
                        Variant="Variant.Outlined"
                        Dense="true"
                        Style="max-width: 200px;">
-                @foreach (var level in Enum.GetValues<LogLevel>().Where(l => l != LogLevel.None))
+                @foreach (var level in LogLevels)
                 {
                     <MudSelectItem T="LogLevel" Value="@level">@level</MudSelectItem>
                 }
             </MudSelect>
 
             <MudSwitch T="bool" 
-                       Value="appOnly"
+                       Value="settings.AppOnly"
                        ValueChanged="OnAppOnlyChanged"
                        Label="App only" 
                        Color="Color.Secondary" />
@@ -60,7 +61,55 @@
         </MudStack>
     </MudPaper>
 
-    <MudPaper Class="pa-4" Style="height: 70vh; overflow-y: auto;" id="log-container">
+    @* ── Category Overrides (expandable) ── *@
+    <MudExpansionPanels Class="mb-4">
+        <MudExpansionPanel Text="Category Filters" MaxHeight="400">
+            <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-2">
+                Override log levels per category. Categories appear as they are discovered from log output.
+            </MudText>
+            <MudTable Items="@categoryRows" Dense="true" Hover="true" FixedHeader="true" Height="300px">
+                <HeaderContent>
+                    <MudTh>Category</MudTh>
+                    <MudTh Style="width: 200px;">Level</MudTh>
+                    <MudTh Style="width: 80px;"></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>
+                        <MudTooltip Text="@context.FullName">
+                            <MudText Typo="Typo.body2">@context.ShortName</MudText>
+                        </MudTooltip>
+                    </MudTd>
+                    <MudTd>
+                        <MudSelect T="string" 
+                                   Value="@context.SelectedLevel"
+                                   ValueChanged="@(v => OnCategoryLevelChanged(context, v))"
+                                   Dense="true"
+                                   Variant="Variant.Text"
+                                   Margin="Margin.Dense">
+                            <MudSelectItem T="string" Value="@("Global")">
+                                Global (@settings.MinimumLogLevel)
+                            </MudSelectItem>
+                            @foreach (var level in LogLevels)
+                            {
+                                <MudSelectItem T="string" Value="@level.ToString()">@level</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudTd>
+                    <MudTd>
+                        @if (context.HasOverride)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.Clear" 
+                                           Size="Size.Small" 
+                                           OnClick="@(() => RemoveCategoryOverride(context))" />
+                        }
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        </MudExpansionPanel>
+    </MudExpansionPanels>
+
+    @* ── Log Table ── *@
+    <MudPaper Class="pa-4" Style="height: 60vh; overflow-y: auto;" id="log-container">
         <MudTable Items="@filteredLogs" 
                   Dense="true" 
                   Hover="true" 
@@ -100,23 +149,24 @@
     </MudPaper>
 
     <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
-        Showing @filteredLogs.Count of @allLogs.Count total log entries
+        Showing @filteredLogs.Count of @allLogs.Count total log entries (buffer max: @settings.MaxLogEntries)
     </MudText>
 </MudContainer>
 
 @code {
-    private static readonly string[] SolutionPrefixes = ["TLinkWebPortal", "DSC.TLink"];
+    private static readonly LogLevel[] LogLevels = Enum.GetValues<LogLevel>().Where(l => l != LogLevel.None).ToArray();
 
-    private LogLevel minimumLogLevel;
-    private bool appOnly = true;
+    private DiagnosticsSettings settings = new();
     private bool autoScroll = true;
     private List<DiagnosticsLogEntry> allLogs = new();
     private List<DiagnosticsLogEntry> filteredLogs = new();
+    private List<CategoryRow> categoryRows = new();
 
     protected override void OnInitialized()
     {
-        minimumLogLevel = SettingsMonitor.CurrentValue.MinimumLogLevel;
+        settings = CloneSettings(SettingsMonitor.CurrentValue);
         allLogs = LogService.GetLogs().ToList();
+        RefreshCategoryRows();
         FilterLogs();
         LogService.LogReceived += OnLogReceived;
     }
@@ -124,7 +174,7 @@
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (autoScroll)
-            await ScrollToBottom();
+            await JS.InvokeVoidAsync("scrollToBottom", "log-container");
     }
 
     private void OnLogReceived(DiagnosticsLogEntry entry)
@@ -132,47 +182,96 @@
         InvokeAsync(() =>
         {
             allLogs.Add(entry);
-            if (MatchesFilter(entry))
-            {
-                filteredLogs.Add(entry);
-                StateHasChanged();
-            }
+
+            // Add new category if discovered
+            if (!categoryRows.Any(r => r.FullName == entry.Category))
+                RefreshCategoryRows();
+
+            filteredLogs.Add(entry);
+            StateHasChanged();
         });
     }
 
-    private async Task OnLogLevelChanged(LogLevel level)
-    {
-        minimumLogLevel = level;
-        FilterLogs();
+    #region Settings Changes (all auto-save)
 
-        // Auto-save to userSettings.json
-        await SettingsPersistence.SaveSettingsAsync(typeof(DiagnosticsSettings), new DiagnosticsSettings
+    private async Task OnGlobalLogLevelChanged(LogLevel level)
+    {
+        settings.MinimumLogLevel = level;
+        FilterLogs();
+        await SaveSettingsAsync();
+    }
+
+    private async Task OnAppOnlyChanged(bool value)
+    {
+        settings.AppOnly = value;
+        FilterLogs();
+        await SaveSettingsAsync();
+    }
+
+    private async Task OnCategoryLevelChanged(CategoryRow row, string value)
+    {
+        if (value == "Global")
         {
-            MinimumLogLevel = minimumLogLevel
-        });
-    }
+            settings.CategoryOverrides.Remove(row.FullName);
+            row.SelectedLevel = "Global";
+            row.HasOverride = false;
+        }
+        else
+        {
+            var level = Enum.Parse<LogLevel>(value);
+            settings.CategoryOverrides[row.FullName] = level;
+            row.SelectedLevel = value;
+            row.HasOverride = true;
+        }
 
-    private void OnAppOnlyChanged(bool value)
-    {
-        appOnly = value;
         FilterLogs();
+        await SaveSettingsAsync();
     }
 
-    private bool MatchesFilter(DiagnosticsLogEntry entry)
+    private async Task RemoveCategoryOverride(CategoryRow row)
     {
-        if (entry.LogLevel < minimumLogLevel)
-            return false;
-
-        if (appOnly && !SolutionPrefixes.Any(p => entry.Category.StartsWith(p, StringComparison.Ordinal)))
-            return false;
-
-        return true;
+        settings.CategoryOverrides.Remove(row.FullName);
+        row.SelectedLevel = "Global";
+        row.HasOverride = false;
+        FilterLogs();
+        await SaveSettingsAsync();
     }
+
+    private async Task SaveSettingsAsync()
+    {
+        await SettingsPersistence.SaveSettingsAsync(typeof(DiagnosticsSettings), settings);
+    }
+
+    #endregion
+
+    #region Filtering & Categories
 
     private void FilterLogs()
     {
-        filteredLogs = allLogs.Where(MatchesFilter).ToList();
+        filteredLogs = allLogs.ToList(); // Show everything the provider captured
     }
+
+    private void RefreshCategoryRows()
+    {
+        categoryRows = LogService.GetDiscoveredCategories()
+            .OrderBy(c => c)
+            .Select(c =>
+            {
+                var hasOverride = settings.CategoryOverrides.TryGetValue(c, out var overrideLevel);
+                return new CategoryRow
+                {
+                    FullName = c,
+                    ShortName = GetShortCategory(c),
+                    SelectedLevel = hasOverride ? overrideLevel.ToString() : "Global",
+                    HasOverride = hasOverride
+                };
+            })
+            .ToList();
+    }
+
+    #endregion
+
+    #region Actions
 
     private void ClearLogs()
     {
@@ -203,10 +302,17 @@
         await JS.InvokeVoidAsync("downloadFile", fileName, base64);
     }
 
-    private async Task ScrollToBottom()
+    #endregion
+
+    #region Helpers
+
+    private static DiagnosticsSettings CloneSettings(DiagnosticsSettings source) => new()
     {
-        await JS.InvokeVoidAsync("scrollToBottom", "log-container");
-    }
+        MinimumLogLevel = source.MinimumLogLevel,
+        MaxLogEntries = source.MaxLogEntries,
+        AppOnly = source.AppOnly,
+        CategoryOverrides = new Dictionary<string, LogLevel>(source.CategoryOverrides)
+    };
 
     private static Color GetLogLevelColor(LogLevel level) => level switch
     {
@@ -228,5 +334,15 @@
     public void Dispose()
     {
         LogService.LogReceived -= OnLogReceived;
+    }
+
+    #endregion
+
+    private class CategoryRow
+    {
+        public required string FullName { get; init; }
+        public required string ShortName { get; init; }
+        public string SelectedLevel { get; set; } = "Global";
+        public bool HasOverride { get; set; }
     }
 }

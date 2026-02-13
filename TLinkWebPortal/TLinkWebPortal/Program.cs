@@ -41,6 +41,12 @@ namespace TLinkWebPortal
             builder.Logging.AddDebug();
             builder.Logging.Services.AddSingleton<ILoggerProvider, DiagnosticsLoggerProvider>();
 
+            // Allow Trace-level logs to reach the DiagnosticsLoggerProvider.
+            // The provider does its own filtering via DiagnosticsSettings.MinimumLogLevel.
+            // Without this, the framework's default "Information" floor discards Trace/Debug
+            // before they ever reach the provider.
+            builder.Logging.AddFilter<DiagnosticsLoggerProvider>(null, LogLevel.Trace);
+
             // Add Blazor services
             builder.Services.AddRazorComponents()
                 .AddInteractiveServerComponents()
